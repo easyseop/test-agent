@@ -98,7 +98,13 @@ data_checks:
 
 ## LLM과 함께 쓰기 (선택)
 
-실행 엔진은 LLM과 무관하지만, **테스트 케이스(YAML) 작성·실패 분석은 IDE의 LLM(Claude Code 등)에게 맡기는 워크플로**를 설계에 포함했습니다 — 앱 설명서·소스·`discovery.json`을 읽혀 시나리오 초안을 생성시키고, diff 리뷰 후 커밋하는 방식입니다. 지식 축적용 위키 패턴(knowledge/)을 포함한 상세 가이드는 [docs/02-design.md](docs/02-design.md) §1·§8 참조.
+실행 엔진은 LLM과 무관하지만, **테스트 케이스(YAML) 작성·실패 분석은 IDE의 LLM(Claude Code)에게 맡기는 워크플로**가 준비되어 있습니다:
+
+- **`/generate-tests <앱> <소스경로> [설명서…]`** — 설명서(기대값의 근거)·소스(셀렉터 좌표)·`discovery.json`을 읽고 시나리오 YAML 초안을 생성. diff 리뷰 후 커밋이 승인 게이트.
+- **`/analyze-report [report.json]`** — 실행 결과를 읽고 실패 원인(앱 버그/테스트 결함/환경)을 분류·분석해 수정 제안.
+- **`knowledge/` 위키** — LLM이 유지하는 앱 지식 베이스. 구조·규약·운영 워크플로(ingest/query/lint)는 [CLAUDE.md](CLAUDE.md) 스키마 참조 (위키 콘텐츠는 직접 구축).
+
+상세 배경은 [docs/02-design.md](docs/02-design.md) §1·§8 참조.
 
 ## v1 한계
 
