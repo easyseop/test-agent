@@ -1,6 +1,8 @@
 """설정(YAML) 로딩과 검증."""
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,6 +11,19 @@ import yaml
 
 class ConfigError(ValueError):
     """설정 파일 오류."""
+
+
+_ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand_env(value: str, where: str) -> str:
+    """'${VAR}' 형태를 환경변수로 치환 — 비밀번호·DB 접속정보의 평문 저장 방지용."""
+    def repl(m: re.Match) -> str:
+        name = m.group(1)
+        if name not in os.environ:
+            raise ConfigError(f"{where}: 환경변수 {name}가 설정되어 있지 않습니다 (${{{name}}} 치환 실패)")
+        return os.environ[name]
+    return _ENV_RX.sub(repl, value)
 
 
 STEP_ACTIONS = {
@@ -39,7 +54,9 @@ class Step:
             raise ConfigError(f"{where}: action '{action}'에는 selector가 필요합니다")
         if action in _NEEDS_VALUE and value is None:
             raise ConfigError(f"{where}: action '{action}'에는 value가 필요합니다")
-        return cls(action=action, selector=selector, value=None if value is None else str(value))
+        if value is not None:
+            value = _expand_env(str(value), where)
+        return cls(action=action, selector=selector, value=value)
 
 
 @dataclass
@@ -105,10 +122,17 @@ class SpecCheckSpec:
 
 
 @dataclass
+class AuthConfig:
+    """로그인 시나리오 — 실행 시작 시 1회 수행 후 세션(storage_state)을 전 시나리오가 재사용."""
+    steps: list[Step] = field(default_factory=list)
+
+
+@dataclass
 class ReportConfig:
     title: str = "웹 자동 테스트 리포트"
     video: bool = True
     trace: bool = True
+    mask_selectors: list[str] = field(default_factory=list)  # 스크린샷에서 가릴 요소(개인정보 등)
 
 
 @dataclass
@@ -119,6 +143,7 @@ class AgentConfig:
     data_checks: list[DataCheckSpec]
     spec_checks: list[SpecCheckSpec]
     report: ReportConfig
+    auth: AuthConfig | None = None
     output_dir: str = "runs"
     config_path: str = ""
 
@@ -188,7 +213,7 @@ def load_config(path: str | Path) -> AgentConfig:
         if not q_raw or not q_raw.get("db") or not q_raw.get("sql"):
             raise ConfigError(f"{where}: query.db와 query.sql이 필요합니다")
         query = QuerySpec(
-            db=str(q_raw["db"]),
+            db=_expand_env(str(q_raw["db"]), f"{where}.query.db"),
             sql=str(q_raw["sql"]),
             order_matters=bool(q_raw.get("order_matters", False)),
         )
@@ -218,11 +243,21 @@ def load_config(path: str | Path) -> AgentConfig:
             steps=spec_steps,
         ))
 
+    auth: AuthConfig | None = None
+    a_raw = data.get("auth")
+    if a_raw:
+        auth_steps = [Step.from_dict(sd, f"auth.steps[{j}]")
+                      for j, sd in enumerate(a_raw.get("steps") or [])]
+        if not auth_steps:
+            raise ConfigError("auth: steps가 최소 1개 필요합니다")
+        auth = AuthConfig(steps=auth_steps)
+
     r = _sub(data, "report")
     report = ReportConfig(
         title=str(r.get("title", "웹 자동 테스트 리포트")),
         video=bool(r.get("video", True)),
         trace=bool(r.get("trace", True)),
+        mask_selectors=[str(x) for x in r.get("mask_selectors", [])],
     )
 
     return AgentConfig(
@@ -232,6 +267,7 @@ def load_config(path: str | Path) -> AgentConfig:
         data_checks=checks,
         spec_checks=specs,
         report=report,
+        auth=auth,
         output_dir=str(data.get("output_dir", "runs")),
         config_path=str(p),
     )

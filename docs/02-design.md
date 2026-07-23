@@ -11,7 +11,7 @@
 | D2 | 정답 쿼리 정의 | YAML에 직접 작성 (사람 또는 IDE의 LLM이 작성 → diff 리뷰·커밋이 승인 게이트) |
 | D3 | LLM 관여 방식 | **런타임 API 호출 없음.** LLM은 작성 시점에 IDE(Claude Code)에서 관여 — 테스트 케이스(YAML) 작성·실패 분석·시나리오 유지보수. 실행 엔진은 100% 결정적 |
 | D4 | v1 구현 범위 | **엔진 전체**(크롤러·스윕·UI↔DB 대조·증적·리포트) + 데모앱 + LLM 워크플로 스캐폴드(`CLAUDE.md` 스키마, `/generate-tests`·`/analyze-report` 커맨드). **`knowledge/` 위키 콘텐츠는 사용자가 직접 구축**(§8은 그 가이드) |
-| D5 | 인증 | v1 범위 외. 스텝 DSL(goto/fill/click)로 로그인 시나리오 표현 가능한 구조만 확보 |
+| D5 | 인증 | ✅ v3 슬라이스로 구현 — `auth.steps`(스텝 DSL)로 로그인 1회 수행 → storage_state 저장 → 전 시나리오·크롤링이 세션 재사용. 비밀번호는 `${환경변수}` 치환(평문 금지). 실패 시 실행 중단(종료코드 2) |
 | D6 | 리포트 전달 | 파일 산출 (HTML 단일파일 + MD + JSON + walkthrough + webm + trace) |
 | D7 | flaky 정책 | 기본 **재시도 없음**. 명시적 대기(`wait_for`)와 안정화 대기로 예방. v2: `target.flaky_recheck: true` 설정 시 실패 시나리오를 1회 재실행해 통과하면 '간헐(flaky) 의심' **경고**로 표시(최초 실패 증적 유지) — 기본 꺼짐 |
 
@@ -62,6 +62,14 @@ target:
   app_version: ""                   # (선택) 대상 앱 버전/커밋 — 리포트 메타에 기록
   flaky_recheck: false              # (v2) 실패 시 1회 재실행해 간헐 의심 표시
 
+auth:                               # (v3) 로그인 — 1회 수행 후 세션 재사용
+  steps:
+    - {action: goto, value: /login}
+    - {action: fill, selector: "#username", value: demo}
+    - {action: fill, selector: "#password", value: "${DEMO_PASSWORD}"}   # 환경변수 치환
+    - {action: click, selector: "#login-btn"}
+    - {action: assert_visible, selector: "#orders-table"}                # 성공 확인
+
 crawl:
   enabled: true
   max_pages: 8
@@ -103,11 +111,14 @@ report:
   title: 주문 대시보드 자동 테스트
   video: true
   trace: true
+  mask_selectors: ["#orders-table td:nth-of-type(2)"]   # (v3) 스크린샷에서 가릴 요소(개인정보)
 
 output_dir: runs
 ```
 
 `query.sql`의 SELECT 컬럼 ↔ `ui_table.columns` **순서 1:1 대응** (개수 불일치 = 설정 오류로 실패).
+`query.db`는 `sqlite:///`(내장, read-only) 외에 SQLAlchemy URL(`postgresql://…`, `mysql+pymysql://…`)도 지원 — sqlalchemy+드라이버 설치 필요. 접속 문자열의 비밀번호는 `${환경변수}`로.
+`mask_selectors`는 **스크린샷에만** 적용된다(비디오·트레이스는 미적용 — 공유 범위 주의).
 
 ## 4. 스텝 DSL
 
@@ -177,7 +188,7 @@ runs/<타임스탬프>/
 ## 11. 운영 원칙 (문서화 사항)
 
 - **사전 준비**: 데이터 검증은 DB 상태를 아는 것이 전제 — 실행 전 시드 스크립트 재실행 또는 read-only 검증만. 운영 DB는 read-only 계정.
-- **민감정보**: 실제 앱의 스크린샷·비디오에 개인정보가 담길 수 있음 — 증적 공유 범위 주의(마스킹은 백로그).
+- **민감정보**: 실제 앱의 증적에 개인정보가 담길 수 있음 — 스크린샷은 `report.mask_selectors`로 마스킹(v3 구현), 비디오·트레이스는 마스킹 미적용이므로 공유 범위 주의.
 - **flaky**: 재시도 없음(D7). 간헐 실패는 대기 스텝 보강으로 해결.
 
 ## 12. 테스트 전략
@@ -187,5 +198,5 @@ runs/<타임스탬프>/
 ## 13. 백로그
 
 **v2 완료(2026-07-23)**: 명세 단언 스텝+spec_checks(③), 전회차 diff, flaky 재확인 옵션, IDE 커맨드(/generate-tests·/analyze-report).
-**v2 잔여**: a11y 검사(axe — 의존성 도입 결정 필요).
-**v3**: 쓰기 검증(⑤), 시각 회귀(⑥), 페이지네이션, 병렬 실행, 크로스 브라우저, 마스킹, 로그인 세션 재사용, 슬랙/메일 전송.
+**v3 1차 완료(2026-07-23)**: 로그인 인증(auth.steps + storage_state 재사용), 스크린샷 마스킹(mask_selectors), SQLAlchemy 경유 DB 확장(PostgreSQL/MySQL), `${환경변수}` 치환.
+**잔여 백로그**: a11y 검사(axe — 의존성 결정 필요), 쓰기 검증(⑤), 시각 회귀(⑥), 페이지네이션, 병렬 실행, 크로스 브라우저, 슬랙/메일 전송, **REST API 오라클**(`query.api` — 오픈메타데이터처럼 엔티티를 DB에 JSON으로 저장하고 목록·검색이 검색엔진(ES)을 경유하는 앱은 SQL 대신 자체 REST API 응답을 정답원으로 쓰는 것이 적합).

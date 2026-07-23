@@ -10,13 +10,43 @@ import io
 import os
 import sqlite3
 
-from flask import Flask, Response, render_template, request
+from flask import Flask, Response, redirect, render_template, request, session
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE, "demo.db")
 BUG = os.environ.get("DEMO_BUG") == "1"
+AUTH = os.environ.get("DEMO_AUTH") == "1"  # 로그인 모드 (계정: demo / demo1234)
 
 app = Flask(__name__, template_folder=os.path.join(BASE, "templates"))
+app.secret_key = "demo-app-secret"
+
+
+@app.before_request
+def _auth_guard():
+    if not AUTH:
+        return None
+    if request.endpoint in ("login", "favicon", "static"):
+        return None
+    if not session.get("user"):
+        return redirect("/login")
+    return None
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = ""
+    if request.method == "POST":
+        if request.form.get("username") == "demo" and request.form.get("password") == "demo1234":
+            session["user"] = "demo"
+            return redirect("/")
+        error = "아이디 또는 비밀번호가 올바르지 않습니다."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/login" if AUTH else "/")
 
 STATUSES = ["pending", "shipped", "delivered", "cancelled"]
 CATEGORIES = ["전자기기", "의류", "식품"]
@@ -70,6 +100,7 @@ def index():
     return render_template(
         "index.html", rows=rows, count=len(rows),
         statuses=STATUSES, categories=CATEGORIES, args=request.args, bug=BUG,
+        auth_user=session.get("user") if AUTH else None,
     )
 
 
@@ -99,5 +130,6 @@ def favicon():
 if __name__ == "__main__":
     if not os.path.exists(DB_PATH):
         raise SystemExit("demo.db가 없습니다. 먼저 `python3 demo_app/seed.py`를 실행하세요.")
-    print(f"[demo-app] http://127.0.0.1:5057 · DEMO_BUG={'1 (버그 주입 모드)' if BUG else '0 (정상 모드)'}")
+    print(f"[demo-app] http://127.0.0.1:5057 · DEMO_BUG={'1 (버그 주입 모드)' if BUG else '0 (정상 모드)'}"
+          f" · DEMO_AUTH={'1 (로그인 필요: demo/demo1234)' if AUTH else '0'}")
     app.run(host="127.0.0.1", port=5057, threaded=True)

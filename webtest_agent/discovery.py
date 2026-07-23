@@ -103,7 +103,8 @@ def crawl(session: BrowserSession, cfg: AgentConfig, run_dir: Path) -> Discovery
             page.wait_for_timeout(cfg.target.settle_ms)
             inventory = page.evaluate(JS_INVENTORY)
             shot_rel = f"screenshots/discovery_{len(discovery.pages):02d}.jpg"
-            save_screenshot(page, run_dir / shot_rel, full_page=True)
+            save_screenshot(page, run_dir / shot_rel, full_page=True,
+                            mask_selectors=cfg.report.mask_selectors)
             discovery.pages.append(PageInfo(
                 url=page.url, path=norm,
                 title=inventory.get("title", ""),

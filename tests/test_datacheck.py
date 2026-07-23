@@ -1,5 +1,37 @@
-"""정규화·비교 로직 유닛 테스트 (브라우저 불필요)."""
-from webtest_agent.datacheck import compare, normalize_cell, parse_count
+"""정규화·비교·쿼리 로직 유닛 테스트 (브라우저 불필요)."""
+import sqlite3
+
+import pytest
+
+from webtest_agent.datacheck import compare, normalize_cell, parse_count, run_query
+
+
+def _make_db(tmp_path):
+    db = tmp_path / "t.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE t (id INTEGER, name TEXT)")
+    conn.execute("INSERT INTO t VALUES (1, '김민준')")
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_run_query_sqlite(tmp_path):
+    db = _make_db(tmp_path)
+    cols, rows = run_query(f"sqlite:///{db}", "SELECT id, name FROM t")
+    assert cols == ["id", "name"] and rows == [(1, "김민준")]
+
+
+def test_run_query_sqlalchemy_url(tmp_path):
+    pytest.importorskip("sqlalchemy")
+    db = _make_db(tmp_path)
+    cols, rows = run_query(f"sqlite+pysqlite:///{db}", "SELECT id, name FROM t")
+    assert cols == ["id", "name"] and rows == [(1, "김민준")]
+
+
+def test_run_query_unsupported_url():
+    with pytest.raises(ValueError, match="지원하지 않는"):
+        run_query("not-a-url", "SELECT 1")
 
 
 def test_normalize_number_formats():

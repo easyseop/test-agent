@@ -34,8 +34,9 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 ## 빠른 시작 (동봉 데모앱)
 
 ```bash
-./scripts/run_demo.sh          # 정상 모드 → 12개 시나리오 전부 통과
-./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 3개를 정확히 검출 (종료코드 1이 정상)
+./scripts/run_demo.sh          # 정상 모드 → 14개 시나리오 전부 통과
+./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 4건 검출 (종료코드 1이 정상)
+./scripts/run_demo.sh --auth   # 로그인 모드 → 인증 세션 재사용 + 고객명 컬럼 스크린샷 마스킹 시연
 ```
 
 버그 주입 모드(`DEMO_BUG=1`)의 검출 예시:
@@ -91,7 +92,22 @@ data_checks:
 
 **정답 쿼리 작성 원칙** — 기대값의 근거는 앱 **설명서(기획 의도)** 에서 가져오고, 소스코드는 셀렉터·테이블명 확인용으로만 씁니다. 구현 코드의 WHERE절을 베끼면 구현 버그가 기대값에 복제되어 영원히 통과합니다(동어반복 함정).
 
-로그인이 필요한 앱은 `steps` 앞부분에 `goto → fill(아이디/비밀번호) → click(로그인)`을 넣어 표현할 수 있습니다.
+**로그인이 필요한 앱**은 `auth` 섹션에 로그인 스텝을 정의합니다 — 실행 시작 시 1회 수행되고, 저장된 세션(storage_state)을 모든 시나리오와 크롤링이 재사용합니다:
+
+```yaml
+auth:
+  steps:
+    - {action: goto, value: /login}
+    - {action: fill, selector: "#username", value: demo}
+    - {action: fill, selector: "#password", value: "${DEMO_PASSWORD}"}   # 비밀번호는 환경변수로
+    - {action: click, selector: "#login-btn"}
+    - {action: assert_visible, selector: "#orders-table"}                # 로그인 성공 확인
+
+crawl:
+  exclude_patterns: ["/logout"]   # 크롤러가 로그아웃을 밟아 세션을 끊지 않도록
+```
+
+개인정보가 표시되는 요소는 `report.mask_selectors: ["td:nth-of-type(2)"]`로 **스크린샷에서 마스킹**할 수 있습니다(비디오·트레이스는 미적용). DB는 `sqlite:///` 외에 SQLAlchemy URL(PostgreSQL·MySQL 등)도 지원합니다.
 
 DB 대조가 필요 없는 **기획 의도 검증**은 `spec_checks`에 단언으로 적습니다:
 
@@ -125,7 +141,8 @@ spec_checks:
 ## 현재 한계
 
 - 데이터 대조는 단일 페이지 표 기준 (페이지네이션 미대응)
-- DB는 SQLite만 (PostgreSQL/MySQL은 커넥터 추가 예정)
+- 정답원은 SQL 쿼리 — REST API를 정답원으로 쓰는 대조(`query.api`)는 백로그 (엔티티를 JSON으로 저장하거나 목록이 검색엔진을 경유하는 앱 대상)
 - 기본 재시도 없음(결정성 우선) — 간헐 실패는 `wait_for` 보강으로 예방하고, 필요 시 `target.flaky_recheck: true`로 재실행 기반 flaky 표시 사용
+- 마스킹은 스크린샷에만 적용 (비디오·트레이스 공유 시 주의)
 
 로드맵과 백로그는 [docs/02-design.md](docs/02-design.md) §13, 검토 배경은 [docs/01-review.md](docs/01-review.md) 참조.

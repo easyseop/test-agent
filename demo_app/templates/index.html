@@ -28,7 +28,10 @@ th{background:#f9fafb}
 <div class="wrap">
 <header>
   <h1>주문 관리 대시보드</h1>
-  <nav><a href="/about">소개</a></nav>
+  <nav>
+    <a href="/about">소개</a>
+    {% if auth_user %} · <span>{{ auth_user }}</span> <a id="logout-link" href="/logout">로그아웃</a>{% endif %}
+  </nav>
 </header>
 
 <form id="filter-form" method="get" action="/">

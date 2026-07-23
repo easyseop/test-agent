@@ -1,0 +1,76 @@
+# 로그인 모드 데모 (DEMO_AUTH=1 로 기동한 데모앱 대상)
+# 실행 전: export DEMO_PASSWORD=demo1234  (비밀번호는 YAML에 평문으로 두지 않고 ${환경변수}로 치환)
+#
+# 시연 포인트:
+#  - auth.steps 로그인 1회 → 이후 모든 시나리오가 세션 재사용
+#  - report.mask_selectors 로 고객명 컬럼을 스크린샷에서 마스킹 (개인정보 증적 보호)
+#  - 로그아웃 링크는 sweep 차단 패턴 + crawl 제외로 이중 방어
+
+target:
+  base_url: http://127.0.0.1:5057
+  settle_ms: 400
+  scenario_timeout_ms: 60000
+  app_version: demo-app (auth mode)
+
+auth:
+  steps:
+    - {action: goto, value: /login}
+    - {action: fill, selector: "#username", value: demo}
+    - {action: fill, selector: "#password", value: "${DEMO_PASSWORD}"}
+    - {action: click, selector: "#login-btn"}
+    - {action: assert_visible, selector: "#orders-table"}   # 로그인 성공 확인
+
+crawl:
+  enabled: true
+  max_pages: 6
+  max_depth: 2
+  exclude_patterns: ["/logout"]   # 크롤러가 로그아웃 URL을 방문해 세션을 끊지 않도록
+
+button_sweep:
+  enabled: true
+  include_links: true
+  avoid_patterns: ["삭제", "delete", "remove", "탈퇴", "결제", "pay", "logout", "로그아웃"]
+
+data_checks:
+  - name: 전체목록(로그인)
+    description: 로그인 후 전체 주문이 표시되고 건수 표기가 일치해야 한다
+    page: /
+    steps:
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 카테고리, 금액, 주문일]
+      count_selector: "#result-count"
+    query:
+      db: sqlite:///demo_app/demo.db
+      sql: "SELECT id, customer, status, category, amount, created_at FROM orders"
+
+  - name: 상태필터-shipped(로그인)
+    description: 상태를 shipped로 필터하면 shipped 주문만 표시되어야 한다
+    page: /
+    steps:
+      - {action: select, selector: "#status", value: "shipped"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 금액]
+      count_selector: "#result-count"
+    query:
+      db: sqlite:///demo_app/demo.db
+      sql: "SELECT id, customer, status, amount FROM orders WHERE status = 'shipped'"
+
+spec_checks:
+  - name: 로그아웃링크-표시
+    description: 로그인 상태에서는 로그아웃 링크가 보여야 한다 (클릭하지는 않음)
+    page: /
+    steps:
+      - {action: assert_visible, selector: "#logout-link"}
+
+report:
+  title: 주문 대시보드 자동 테스트 (로그인 모드)
+  video: true
+  trace: true
+  mask_selectors: ["#orders-table td:nth-of-type(2)"]   # 고객명 컬럼 마스킹
+
+output_dir: runs

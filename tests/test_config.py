@@ -75,6 +75,31 @@ data_checks:
         load_config(p)
 
 
+def test_load_auth_config(monkeypatch):
+    monkeypatch.setenv("DEMO_PASSWORD", "demo1234")
+    cfg = load_config(ROOT / "configs" / "demo-auth.yaml")
+    assert cfg.auth is not None
+    assert cfg.auth.steps[2].value == "demo1234"  # ${DEMO_PASSWORD} 치환 확인
+    assert cfg.report.mask_selectors == ["#orders-table td:nth-of-type(2)"]
+    assert "/logout" in cfg.crawl.exclude_patterns
+
+
+def test_env_expand_missing_var(tmp_path, monkeypatch):
+    monkeypatch.delenv("NO_SUCH_VAR_XYZ", raising=False)
+    p = tmp_path / "bad.yaml"
+    p.write_text(
+        """
+target: {base_url: http://x}
+auth:
+  steps:
+    - {action: fill, selector: "#pw", value: "${NO_SUCH_VAR_XYZ}"}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="NO_SUCH_VAR_XYZ"):
+        load_config(p)
+
+
 def test_data_check_requires_query(tmp_path):
     p = tmp_path / "bad.yaml"
     p.write_text(

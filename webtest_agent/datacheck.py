@@ -23,18 +23,41 @@ def normalize_cell(value) -> str:
 
 
 def run_query(db_url: str, sql: str) -> tuple[list[str], list[tuple]]:
-    """정답 쿼리 실행. v1은 sqlite:///<경로>만 지원 (상대 경로는 CWD 기준)."""
-    if not db_url.startswith("sqlite:///"):
-        raise ValueError(f"v1은 'sqlite:///<경로>' 형식만 지원합니다 (받은 값: {db_url})")
-    path = db_url[len("sqlite:///"):]
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    try:
-        cur = conn.execute(sql)
-        cols = [d[0] for d in cur.description or []]
-        rows = cur.fetchall()
-    finally:
-        conn.close()
-    return cols, rows
+    """정답 쿼리 실행.
+
+    - sqlite:///<경로> : 내장 sqlite3, 읽기 전용(read-only) 접속
+    - 그 외 SQLAlchemy URL (postgresql://…, mysql+pymysql://… 등) : sqlalchemy 필요
+    """
+    if db_url.startswith("sqlite:///"):
+        path = db_url[len("sqlite:///"):]
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            cur = conn.execute(sql)
+            cols = [d[0] for d in cur.description or []]
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+        return cols, rows
+
+    if "://" in db_url:
+        try:
+            from sqlalchemy import create_engine, text
+        except ImportError as err:
+            raise ValueError(
+                "SQLite 외 DB 대조에는 sqlalchemy가 필요합니다 — "
+                "pip install sqlalchemy 와 드라이버(PostgreSQL: psycopg2-binary, MySQL: pymysql)"
+            ) from err
+        engine = create_engine(db_url)
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text(sql))
+                cols = list(result.keys())
+                rows = [tuple(r) for r in result.fetchall()]
+        finally:
+            engine.dispose()
+        return cols, rows
+
+    raise ValueError(f"지원하지 않는 DB URL 형식입니다: {db_url}")
 
 
 JS_EXTRACT_TABLE = """(table) => {

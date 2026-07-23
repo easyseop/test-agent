@@ -58,6 +58,18 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     with BrowserSession(headless=not args.headed) as session:
         meta.browser_version = session.version
+        runner = Runner(session, cfg, run_dir)
+
+        if cfg.auth:
+            print("⓪ 로그인(인증) 세션 준비 중...")
+            state_path = run_dir / "auth_state.json"
+            try:
+                runner.authenticate(cfg.auth.steps, state_path)
+            except Exception as err:
+                print(f"인증 실패 — 실행을 중단합니다: {str(err).splitlines()[0][:200]}", file=sys.stderr)
+                return 2
+            session.storage_state = state_path  # 이후 모든 컨텍스트가 로그인 세션 재사용
+            print("   인증 완료 (세션은 이번 실행의 모든 시나리오에서 재사용)")
 
         discovery = Discovery()
         if cfg.crawl.enabled:
@@ -76,7 +88,6 @@ def cmd_run(args: argparse.Namespace) -> int:
               f" + 명세 검증 {len(cfg.spec_checks)}"
               f" + 스윕 {len(scenarios) - len(cfg.data_checks) - len(cfg.spec_checks)})")
 
-        runner = Runner(session, cfg, run_dir)
         results = []
         for i, sc in enumerate(scenarios, 1):
             print(f"③ [{i}/{len(scenarios)}] {sc.name} ... ", end="", flush=True)
@@ -124,6 +135,15 @@ def cmd_discover(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     run_dir = _make_run_dir(cfg, args.out)
     with BrowserSession(headless=not args.headed) as session:
+        if cfg.auth:
+            runner = Runner(session, cfg, run_dir)
+            state_path = run_dir / "auth_state.json"
+            try:
+                runner.authenticate(cfg.auth.steps, state_path)
+            except Exception as err:
+                print(f"인증 실패 — 실행을 중단합니다: {str(err).splitlines()[0][:200]}", file=sys.stderr)
+                return 2
+            session.storage_state = state_path
         discovery = crawl(session, cfg, run_dir)
     print(f"페이지 {len(discovery.pages)}개 → {run_dir}/discovery.json")
     for p in discovery.pages:

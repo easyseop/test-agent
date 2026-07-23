@@ -98,6 +98,8 @@ class BrowserSession:
         self.headless = headless
         self._pw = None
         self.browser: Browser | None = None
+        # 인증 후 세팅되면 이후 모든 컨텍스트가 로그인 세션을 재사용한다
+        self.storage_state: Path | None = None
 
     def __enter__(self) -> "BrowserSession":
         self.start()
@@ -140,6 +142,8 @@ class BrowserSession:
             "accept_downloads": True,
             "locale": "ko-KR",
         }
+        if self.storage_state is not None and self.storage_state.exists():
+            kwargs["storage_state"] = str(self.storage_state)
         if video_dir is not None:
             video_dir.mkdir(parents=True, exist_ok=True)
             kwargs["record_video_dir"] = str(video_dir)
@@ -153,10 +157,18 @@ class BrowserSession:
         return ctx, page, monitor
 
 
-def save_screenshot(page: Page, path: Path, full_page: bool = False) -> str:
+def save_screenshot(
+    page: Page,
+    path: Path,
+    full_page: bool = False,
+    mask_selectors: list[str] | None = None,
+) -> str:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        page.screenshot(path=str(path), type="jpeg", quality=60, full_page=full_page)
+        kwargs: dict = {"path": str(path), "type": "jpeg", "quality": 60, "full_page": full_page}
+        if mask_selectors:
+            kwargs["mask"] = [page.locator(sel) for sel in mask_selectors]
+        page.screenshot(**kwargs)
         return str(path)
     except Exception:
         return ""

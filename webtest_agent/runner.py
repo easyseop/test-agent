@@ -59,6 +59,22 @@ class Runner:
             return ""
         return Path(path).relative_to(self.run_dir).as_posix()
 
+    def _shot(self, page, path: Path, full_page: bool = False) -> str:
+        return save_screenshot(page, path, full_page=full_page,
+                               mask_selectors=self.cfg.report.mask_selectors)
+
+    def authenticate(self, steps, state_path: Path) -> None:
+        """로그인 스텝을 1회 수행하고 세션(storage_state)을 저장한다."""
+        ctx, page, _monitor = self.session.new_context(self.cfg.target.base_url)
+        try:
+            page.set_default_timeout(5000)
+            for step in steps:
+                self._exec_step(page, step)
+                page.wait_for_timeout(self.cfg.target.settle_ms)
+            ctx.storage_state(path=str(state_path))
+        finally:
+            ctx.close()
+
     def run(self, scenario: Scenario, index: int, suffix: str = "") -> ScenarioResult:
         res = ScenarioResult(
             name=scenario.name, kind=scenario.kind,
@@ -82,7 +98,7 @@ class Runner:
             res.steps.append(StepResult(
                 index=0, action="goto",
                 description=f"{scenario.page or '/'} 페이지에 접속한다",
-                screenshot=self._rel(save_screenshot(page, shots_dir / "step00.jpg")),
+                screenshot=self._rel(self._shot(page, shots_dir / "step00.jpg")),
             ))
 
             # 초기 로드에서 발생한 신호는 액션 판정과 분리한다
@@ -106,11 +122,11 @@ class Runner:
                 try:
                     self._exec_step(page, step)
                     page.wait_for_timeout(self.cfg.target.settle_ms)
-                    sr.screenshot = self._rel(save_screenshot(page, shots_dir / f"step{i:02d}.jpg"))
+                    sr.screenshot = self._rel(self._shot(page, shots_dir / f"step{i:02d}.jpg"))
                 except Exception as err:
                     sr.status = "fail"
                     sr.error = _short(err)
-                    sr.screenshot = self._rel(save_screenshot(page, shots_dir / f"step{i:02d}_fail.jpg"))
+                    sr.screenshot = self._rel(self._shot(page, shots_dir / f"step{i:02d}_fail.jpg"))
                     res.steps.append(sr)
                     res.reasons.append(f"스텝 {i} 실패 — {sr.description}: {sr.error}")
                     step_failed = True
@@ -142,7 +158,7 @@ class Runner:
 
             if scenario.kind == "data_check" and not step_failed:
                 res.data_check = self._data_check(page, scenario)
-                save_screenshot(page, shots_dir / "result.jpg", full_page=True)
+                self._shot(page, shots_dir / "result.jpg", full_page=True)
 
         except ScenarioTimeout:
             hard_fail = True
