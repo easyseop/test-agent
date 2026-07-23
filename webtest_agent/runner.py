@@ -11,8 +11,9 @@ from .config import AgentConfig, Step
 from .datacheck import (compare, extract_table, parse_count, run_api_query,
                         run_query, run_scalar_query)
 from .models import (FAIL, PASS, WARN, DataCheckResult, ScenarioResult,
-                     StepResult, WriteCheckResult)
+                     StepResult, VisualResult, WriteCheckResult)
 from .scenarios import Scenario, slugify
+from .visual import compare_images
 
 
 class ScenarioTimeout(Exception):
@@ -49,10 +50,12 @@ def _dom_size(page) -> int:
 
 
 class Runner:
-    def __init__(self, session: BrowserSession, cfg: AgentConfig, run_dir: Path) -> None:
+    def __init__(self, session: BrowserSession, cfg: AgentConfig, run_dir: Path,
+                 update_baselines: bool = False) -> None:
         self.session = session
         self.cfg = cfg
         self.run_dir = run_dir
+        self.update_baselines = update_baselines
         (run_dir / "videos").mkdir(parents=True, exist_ok=True)
         (run_dir / "traces").mkdir(parents=True, exist_ok=True)
 
@@ -167,6 +170,9 @@ class Runner:
                 res.data_check = self._data_check(page, scenario)
                 self._shot(page, shots_dir / "result.jpg", full_page=True)
 
+            if scenario.kind == "visual_check" and not step_failed:
+                res.visual = self._visual_check(page, scenario, shots_dir)
+
             if scenario.kind == "write_check" and not step_failed and write_pre is not None:
                 spec = scenario.write_spec
                 try:
@@ -272,6 +278,43 @@ class Runner:
             rows += more
         return headers, rows
 
+    def _visual_check(self, page, scenario: Scenario, shots_dir: Path) -> VisualResult:
+        spec = scenario.visual_spec
+        baseline = Path(self.cfg.baselines_dir) / f"{slugify(spec.name)}.png"
+        current = shots_dir / "visual_current.png"
+        current.parent.mkdir(parents=True, exist_ok=True)
+
+        masks = [page.locator(s) for s in self.cfg.report.mask_selectors] or None
+        try:
+            if spec.selector:
+                page.locator(spec.selector).first.screenshot(path=str(current), mask=masks)
+            else:
+                page.screenshot(path=str(current), full_page=spec.full_page, mask=masks)
+        except Exception as err:
+            return VisualResult(note=f"화면 캡처 실패: {_short(err)}", threshold=spec.threshold)
+
+        result = VisualResult(threshold=spec.threshold,
+                              baseline=str(baseline), current=self._rel(current))
+        if self.update_baselines or not baseline.exists():
+            baseline.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(current, baseline)
+            result.matched = True
+            result.baseline_updated = self.update_baselines and not result.baseline_created
+            result.baseline_created = not self.update_baselines
+            return result
+
+        try:
+            diff_path = shots_dir / "visual_diff.png"
+            ratio, note = compare_images(baseline, current, diff_path)
+            result.ratio = ratio
+            result.note = note
+            result.matched = ratio <= spec.threshold and not note
+            if diff_path.exists():
+                result.diff = self._rel(diff_path)
+        except Exception as err:
+            result.note = f"이미지 비교 실패: {_short(err)}"
+        return result
+
     def _data_check(self, page, scenario: Scenario) -> DataCheckResult:
         spec = scenario.spec
         try:
@@ -323,6 +366,27 @@ class Runner:
                 dc_failed = True
                 res.reasons.append(f"건수 표기({dc.count_display}건) ≠ 실제 표 행 수({dc.ui_count}건)")
 
+        vis = res.visual
+        vis_failed = vis_warn = False
+        if vis is not None:
+            if vis.baseline_created:
+                res.reasons.append(f"시각 기준선 생성됨: {vis.baseline} (다음 실행부터 비교)")
+            elif vis.baseline_updated:
+                res.reasons.append(f"시각 기준선 갱신됨(--update-baselines): {vis.baseline}")
+            elif vis.note and "실패" in vis.note:
+                vis_failed = True
+                res.reasons.append(f"시각 비교 불가: {vis.note}")
+            elif not vis.matched:
+                msg = (f"화면이 기준선과 {vis.ratio * 100:.2f}% 다릅니다"
+                       f" (허용 {vis.threshold * 100:.2f}%)"
+                       + (f" — {vis.note}" if vis.note else "")
+                       + " · 의도된 변경이면 `run --update-baselines`로 기준선 갱신")
+                if scenario.visual_spec and scenario.visual_spec.severity == "fail":
+                    vis_failed = True
+                else:
+                    vis_warn = True
+                res.reasons.append(msg)
+
         wc = res.write_check
         wc_failed = False
         if wc is not None:
@@ -337,8 +401,10 @@ class Runner:
 
         step_failed = any(s.status == "fail" for s in res.steps)
         if (hard_fail or step_failed or res.console_errors or res.page_errors
-                or res.http_failures or dc_failed or wc_failed):
+                or res.http_failures or dc_failed or wc_failed or vis_failed):
             res.status = FAIL
+        elif vis_warn:
+            res.status = WARN
         elif scenario.kind.startswith("sweep") and res.effect == "무반응":
             res.status = WARN
             res.reasons.append("클릭 후 관찰 가능한 변화가 없음 (죽은 버튼 후보)")

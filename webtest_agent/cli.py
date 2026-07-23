@@ -14,10 +14,11 @@ from .config import AgentConfig, ConfigError, load_config
 from .discovery import Discovery, crawl
 from .history import diff_for
 from .models import FAIL, STATUS_LABEL, WARN, RunMeta
+from .notify import build_payload, send_webhook
 from .report import write_reports
 from .runner import Runner
 from .scenarios import (build_data_checks, build_spec_checks, build_sweep,
-                        build_write_checks)
+                        build_visual_checks, build_write_checks)
 
 
 def _now() -> str:
@@ -59,7 +60,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     with BrowserSession(headless=not args.headed) as session:
         meta.browser_version = session.version
-        runner = Runner(session, cfg, run_dir)
+        runner = Runner(session, cfg, run_dir,
+                        update_baselines=getattr(args, "update_baselines", False))
 
         if cfg.auth:
             print("⓪ 로그인(인증) 세션 준비 중...")
@@ -89,10 +91,12 @@ def cmd_run(args: argparse.Namespace) -> int:
             scenarios += sweep
             if blocked:
                 print(f"   ⛔ 차단 패턴으로 건너뛴 요소 {len(blocked)}개 (리포트에 기록)")
+        scenarios += build_visual_checks(cfg)
         scenarios += build_write_checks(cfg)  # 쓰기 검증은 데이터 상태를 바꾸므로 마지막에
+        fixed = len(cfg.data_checks) + len(cfg.spec_checks) + len(cfg.visual_checks) + len(cfg.write_checks)
         print(f"② 시나리오 {len(scenarios)}개 생성 (데이터 검증 {len(cfg.data_checks)}"
-              f" + 명세 검증 {len(cfg.spec_checks)} + 쓰기 검증 {len(cfg.write_checks)}"
-              f" + 스윕 {len(scenarios) - len(cfg.data_checks) - len(cfg.spec_checks) - len(cfg.write_checks)})")
+              f" + 명세 검증 {len(cfg.spec_checks)} + 시각 회귀 {len(cfg.visual_checks)}"
+              f" + 쓰기 검증 {len(cfg.write_checks)} + 스윕 {len(scenarios) - fixed})")
 
         results = []
         for i, sc in enumerate(scenarios, 1):
@@ -135,6 +139,12 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"  ✗ {r.name} — {reason}")
     print(f"리포트: {run_dir}/report.html (스크린샷 내장 단일 파일)")
     print(f"절차서: {run_dir}/walkthrough.md · 비디오: {run_dir}/videos/ · 트레이스: {run_dir}/traces/")
+
+    if cfg.notify and (cfg.notify.on == "always" or summary["fail"]):
+        err = send_webhook(cfg.notify.webhook_url,
+                           build_payload(meta, summary, results, str(run_dir)))
+        print(f"웹훅 알림 {'전송 실패: ' + err if err else '전송 완료'}")
+
     return 1 if summary["fail"] else 0
 
 
@@ -172,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     common.add_argument("--out", help="산출물 루트 디렉터리 (기본: 설정의 output_dir)")
 
     p_run = sub.add_parser("run", parents=[common], help="크롤링→시나리오→실행→리포트 전체 수행")
+    p_run.add_argument("--update-baselines", action="store_true",
+                       help="시각 회귀 기준선을 이번 실행 화면으로 갱신(의도된 UI 변경 승인)")
     p_run.set_defaults(func=cmd_run)
     p_disc = sub.add_parser("discover", parents=[common], help="크롤링·인벤토리만 수행")
     p_disc.set_defaults(func=cmd_discover)

@@ -155,6 +155,29 @@ class WriteCheckSpec:
 
 
 @dataclass
+class VisualCheckSpec:
+    """시각 회귀(기준선 대조) — 첫 실행 시 기준선 생성, 이후 픽셀 비교.
+
+    의도된 UI 변경은 `run --update-baselines`로 기준선을 갱신(승인)한다.
+    """
+    name: str
+    page: str = "/"
+    description: str = ""
+    steps: list[Step] = field(default_factory=list)
+    selector: str = ""            # 지정 시 해당 요소만 비교 (기본: 뷰포트)
+    full_page: bool = False
+    threshold: float = 0.01       # 허용되는 달라진 픽셀 비율 (1%)
+    severity: str = "warn"        # warn(기본) | fail — 불일치 시 판정
+
+
+@dataclass
+class NotifyConfig:
+    """실행 후 웹훅 알림 (Slack Incoming Webhook 호환 JSON POST)."""
+    webhook_url: str
+    on: str = "fail"              # fail(기본: 실패 있을 때만) | always
+
+
+@dataclass
 class A11yConfig:
     """접근성 기본 점검(간이·내장) — 크롤링한 페이지에 정보성으로 보고 (판정에 영향 없음)."""
     enabled: bool = False
@@ -182,9 +205,12 @@ class AgentConfig:
     data_checks: list[DataCheckSpec]
     spec_checks: list[SpecCheckSpec]
     write_checks: list[WriteCheckSpec]
+    visual_checks: list[VisualCheckSpec]
     report: ReportConfig
     a11y: A11yConfig = field(default_factory=A11yConfig)
     auth: AuthConfig | None = None
+    notify: NotifyConfig | None = None
+    baselines_dir: str = "baselines"
     output_dir: str = "runs"
     config_path: str = ""
 
@@ -337,6 +363,39 @@ def load_config(path: str | Path) -> AgentConfig:
             expect_delta=int(raw["expect_delta"]),
         ))
 
+    visuals: list[VisualCheckSpec] = []
+    for i, raw in enumerate(data.get("visual_checks") or []):
+        where = f"visual_checks[{i}]"
+        if not isinstance(raw, dict) or not raw.get("name"):
+            raise ConfigError(f"{where}: name이 필요합니다")
+        severity = str(raw.get("severity", "warn"))
+        if severity not in ("warn", "fail"):
+            raise ConfigError(f"{where}: severity는 warn 또는 fail이어야 합니다")
+        visuals.append(VisualCheckSpec(
+            name=str(raw["name"]),
+            page=str(raw.get("page", "/")),
+            description=str(raw.get("description", "")),
+            steps=[Step.from_dict(sd, f"{where}.steps[{j}]")
+                   for j, sd in enumerate(raw.get("steps") or [])],
+            selector=str(raw.get("selector", "")),
+            full_page=bool(raw.get("full_page", False)),
+            threshold=float(raw.get("threshold", 0.01)),
+            severity=severity,
+        ))
+
+    notify: NotifyConfig | None = None
+    n_raw = data.get("notify")
+    if n_raw:
+        if not n_raw.get("webhook_url"):
+            raise ConfigError("notify: webhook_url이 필요합니다")
+        on = str(n_raw.get("on", "fail"))
+        if on not in ("fail", "always"):
+            raise ConfigError("notify: on은 fail 또는 always여야 합니다")
+        notify = NotifyConfig(
+            webhook_url=_expand_env(str(n_raw["webhook_url"]), "notify.webhook_url"),
+            on=on,
+        )
+
     a11y = A11yConfig(enabled=bool(_sub(data, "a11y").get("enabled", False)))
 
     auth: AuthConfig | None = None
@@ -363,9 +422,12 @@ def load_config(path: str | Path) -> AgentConfig:
         data_checks=checks,
         spec_checks=specs,
         write_checks=writes,
+        visual_checks=visuals,
         report=report,
         a11y=a11y,
         auth=auth,
+        notify=notify,
+        baselines_dir=str(data.get("baselines_dir", "baselines")),
         output_dir=str(data.get("output_dir", "runs")),
         config_path=str(p),
     )

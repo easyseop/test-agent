@@ -26,6 +26,7 @@ th{background:#f9fafb}
 </head>
 <body>
 <div class="wrap">
+{% if bug %}<div id="debug-banner" style="background:#fde047;padding:5px 12px;border-radius:6px;font-size:12.5px">DEBUG MODE — 내부 확인용 배너 (배포에 노출되면 안 됨)</div>{% endif %}
 <header>
   <h1>주문 관리 대시보드</h1>
   <nav>

@@ -165,8 +165,24 @@ write_checks:
       sql: "SELECT COUNT(*) FROM orders"
     expect_delta: 1
 
+# 시각 회귀 — 첫 실행 시 baselines/에 기준선 생성, 이후 픽셀 비교 (불일치 = 경고)
+# 의도된 UI 변경은 `run --update-baselines`로 승인. 기준선은 같은 실행 환경에서 생성할 것.
+visual_checks:
+  - name: 메인화면-시각
+    description: 메인 화면(뷰포트)이 기준선과 동일해야 한다
+    page: /
+    threshold: 0.01
+  - name: 소개화면-시각
+    description: 소개 화면이 기준선과 동일해야 한다
+    page: /about
+    threshold: 0.01
+
 a11y:
   enabled: true   # 접근성 기본 점검 (간이·정보성)
+
+# notify:                              # (선택) 실행 후 웹훅 알림 — Slack Incoming Webhook 호환
+#   webhook_url: "${WEBHOOK_URL}"      # 비밀 URL은 환경변수로
+#   on: fail                           # fail(기본: 실패 있을 때만) | always
 
 report:
   title: 주문 대시보드 자동 테스트 (데모)

@@ -24,7 +24,7 @@
 | ③ | 명세 기반 단언 (기대 동작 명시) | 사람/LLM 명세 | ✅ v2 구현 — `spec_checks` + `assert_visible/assert_text/assert_url` (명세 작성은 사람 또는 `/generate-tests`) |
 | ④ | 불변식 기반 — 예: 표시 건수 = 실제 행 수 | 항상 참인 성질 | ✅ 일부 (건수 불변식) |
 | ⑤ | 상태 전이 (쓰기 액션의 DB 반영) | 전후 DB 상태 | ✅ 구현 — `write_checks` (스텝 전후 스칼라 변화량, 시드/스테이징 전용) |
-| ⑥ | 기준선/스냅샷 대조 (시각 회귀) | 과거 실행 | 백로그 (기준선 승인 플로 결정 필요) |
+| ⑥ | 기준선/스냅샷 대조 (시각 회귀) | 과거 실행(기준선) | ✅ 구현 — `visual_checks`: 첫 실행 시 기준선 자동 생성 → 픽셀 비교, 불일치 기본 **경고**(severity로 fail 가능), 의도된 변경은 `run --update-baselines`로 승인 |
 | ⑦ | 사람/LLM 판단 | 사람 감각 | 참고 코멘트만 (v2) — 접근성 기본 점검(간이·정보성)은 `a11y.enabled`로 구현 |
 
 **LLM 역할 규칙** (D3): 입력 3종 = 설명서(기대값의 근거) + 소스코드(셀렉터·스키마 좌표) + 크롤링 인벤토리(실존 확인). **기대값의 근거는 설명서에서, 코드는 좌표 참조용** — 구현 버그가 기대값에 복제되는 동어반복 함정 방지. 판정(채점)은 LLM이 하지 않는다.
@@ -125,6 +125,18 @@ write_checks:                       # 쓰기(상태 전이) 검증 — 검증 �
 a11y:
   enabled: false                    # 접근성 기본 점검(간이·내장) — 정보성, 판정에 미반영
 
+visual_checks:                      # 시각 회귀 (검증 방법 ⑥)
+  - name: 메인화면-시각
+    page: /
+    threshold: 0.01                 # 허용 픽셀 변화 비율 (1%)
+    severity: warn                  # warn(기본) | fail
+    # selector: "#orders-table"     # (선택) 요소만 비교, full_page: true 도 가능
+baselines_dir: baselines            # 기준선 저장 위치 — 같은 실행 환경에서 생성·비교할 것
+
+notify:                             # (선택) 실행 후 웹훅 알림 — Slack Incoming Webhook 호환
+  webhook_url: "${WEBHOOK_URL}"
+  on: fail                          # fail(기본) | always
+
 report:
   title: 주문 대시보드 자동 테스트
   video: true
@@ -220,4 +232,5 @@ runs/<타임스탬프>/
 **v2 완료(2026-07-23)**: 명세 단언 스텝+spec_checks(③), 전회차 diff, flaky 재확인 옵션, IDE 커맨드(/generate-tests·/analyze-report).
 **v3 1차 완료(2026-07-23)**: 로그인 인증(auth.steps + storage_state 재사용), 스크린샷 마스킹(mask_selectors), SQLAlchemy 경유 DB 확장(PostgreSQL/MySQL), `${환경변수}` 치환.
 **v3 2차 완료(2026-07-23)**: REST API 오라클(`query.api` — 오픈메타데이터류 대비), 페이지네이션 순회(`ui_table.pagination`), 쓰기 검증(⑤, `write_checks`), 접근성 기본 점검(간이·정보성, `a11y.enabled`).
-**잔여 백로그**: axe 기반 정식 a11y(의존성 결정 필요), 시각 회귀(⑥ — 기준선 승인 플로 결정 필요), 병렬 실행, 크로스 브라우저(firefox/webkit 설치 필요), 슬랙/메일 전송(외부 자격 필요).
+**v3 3차 완료(2026-07-23)**: 시각 회귀(⑥, `visual_checks` + `--update-baselines` 승인 플로 — pillow 픽셀 diff·마젠타 diff 이미지), 웹훅 알림(`notify` — Slack Incoming Webhook 호환).
+**잔여 백로그**: axe 기반 정식 a11y(의존성 결정 필요), 병렬 실행, 크로스 브라우저(firefox/webkit 설치 필요). — 이로써 검증 방법 ①~⑥이 모두 엔진에 구현됨 (⑦은 설계상 참고용).

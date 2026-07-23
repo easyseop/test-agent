@@ -53,6 +53,19 @@ class WriteCheckResult:
 
 
 @dataclass
+class VisualResult:
+    matched: bool = False
+    ratio: float = 0.0            # 달라진 픽셀 비율
+    threshold: float = 0.01
+    baseline_created: bool = False
+    baseline_updated: bool = False
+    baseline: str = ""            # 기준선 파일 경로 (CWD 기준)
+    current: str = ""             # 이번 실행 캡처 (run_dir 기준 상대)
+    diff: str = ""                # diff 이미지 (run_dir 기준 상대)
+    note: str = ""
+
+
+@dataclass
 class ScenarioResult:
     name: str
     kind: str                   # sweep_button | sweep_link | data_check
@@ -69,6 +82,7 @@ class ScenarioResult:
     effect: str = ""            # 스윕: 관찰된 효과 요약
     data_check: DataCheckResult | None = None
     write_check: WriteCheckResult | None = None
+    visual: VisualResult | None = None
     video: str = ""
     trace: str = ""
     flaky: bool = False          # 실패 후 재실행에서 통과 → 간헐 의심

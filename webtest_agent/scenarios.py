@@ -4,7 +4,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .config import AgentConfig, DataCheckSpec, Step, WriteCheckSpec
+from .config import (AgentConfig, DataCheckSpec, Step, VisualCheckSpec,
+                     WriteCheckSpec)
 from .discovery import Discovery
 from .models import BlockedElement
 
@@ -27,6 +28,7 @@ class Scenario:
     element_text: str = ""
     spec: DataCheckSpec | None = None
     write_spec: WriteCheckSpec | None = None
+    visual_spec: VisualCheckSpec | None = None
 
 
 def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario], list[BlockedElement]]:
@@ -102,6 +104,21 @@ def build_spec_checks(cfg: AgentConfig) -> list[Scenario]:
             description=spec.description,
         )
         for spec in cfg.spec_checks
+    ]
+
+
+def build_visual_checks(cfg: AgentConfig) -> list[Scenario]:
+    """시각 회귀 시나리오 — 기준선 대비 픽셀 비교."""
+    return [
+        Scenario(
+            name=spec.name,
+            kind="visual_check",
+            page=spec.page,
+            steps=list(spec.steps),
+            description=spec.description,
+            visual_spec=spec,
+        )
+        for spec in cfg.visual_checks
     ]
 
 

@@ -11,7 +11,8 @@ from .models import FAIL, PASS, WARN, BlockedElement, RunMeta, ScenarioResult
 
 BADGE = {PASS: ("통과", "#16a34a"), WARN: ("경고", "#d97706"), FAIL: ("실패", "#dc2626")}
 KIND_LABEL = {"sweep_button": "버튼 스윕", "sweep_link": "링크 스윕",
-              "data_check": "데이터 검증", "spec_check": "명세 검증", "write_check": "쓰기 검증"}
+              "data_check": "데이터 검증", "spec_check": "명세 검증",
+              "write_check": "쓰기 검증", "visual_check": "시각 회귀"}
 
 _A11Y_LABEL = {"img-alt": "대체 텍스트(alt) 없는 이미지", "input-label": "라벨 없는 입력 요소",
                "empty-name": "접근 가능한 이름 없는 버튼/링크", "html-lang": "html lang 속성 없음",
@@ -20,7 +21,7 @@ _A11Y_LABEL = {"img-alt": "대체 텍스트(alt) 없는 이미지", "input-label
 _DIFF_LABEL = {"new_failures": "🔴 신규 실패", "fixed": "🟢 복구됨", "still_failing": "⚠️ 계속 실패",
                "added": "새 시나리오", "removed": "사라진 시나리오"}
 
-_MAX_EMBED_BYTES = 400_000
+_MAX_EMBED_BYTES = 900_000
 
 
 def summarize(results: list[ScenarioResult]) -> dict:
@@ -158,6 +159,10 @@ def _write_walkthrough(path, meta, results) -> None:
         if wc and not wc.note:
             mark = "일치 ✅" if wc.matched else "불일치 ❌"
             outcome.append(f"상태 전이 {wc.pre:g}→{wc.post:g} (기대 {wc.expected_delta:+d}) → {mark}")
+        vis = r.visual
+        if vis and not vis.baseline_created and not vis.baseline_updated and not vis.note:
+            mark = "일치 ✅" if vis.matched else "불일치 ⚠️"
+            outcome.append(f"기준선 대비 변화 {vis.ratio * 100:.2f}% → {mark}")
         outcome += r.reasons
         lines.append("")
         lines.append(f"→ **결과: {label}**" + (" — " + " / ".join(outcome) if outcome else ""))
@@ -209,7 +214,8 @@ def _b64_img(run_dir: Path, rel: str) -> str:
         return ""
     if len(data) > _MAX_EMBED_BYTES:
         return ""
-    return "data:image/jpeg;base64," + base64.b64encode(data).decode()
+    mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+    return f"data:{mime};base64," + base64.b64encode(data).decode()
 
 
 def _esc(s) -> str:
@@ -252,6 +258,20 @@ def _scenario_card(run_dir: Path, index: int, r: ScenarioResult) -> str:
         parts.append(f"<p style='font-size:13.5px'>UI {dc.ui_count}건 vs DB {dc.db_count}건 → {mark}{count_note}</p>")
         parts.append(_diff_table(dc.columns, dc.missing_in_ui, "화면에 누락된 DB 행", dc.missing_total))
         parts.append(_diff_table(dc.columns, dc.unexpected_in_ui, "DB에 없는데 화면에 있는 행", dc.unexpected_total))
+
+    vis = r.visual
+    if vis is not None and not vis.baseline_created and not vis.baseline_updated and not vis.note:
+        mark = "일치 ✅" if vis.matched else "<b style='color:#d97706'>불일치</b>"
+        parts.append(f"<p style='font-size:13.5px'>기준선 대비 변화 {vis.ratio * 100:.2f}%"
+                     f" (허용 {vis.threshold * 100:.2f}%) → {mark}</p>")
+    if vis is not None and (vis.current or vis.diff):
+        figures = []
+        for label, rel in (("이번 실행", vis.current), ("diff (변경=마젠타)", vis.diff)):
+            src = _b64_img(run_dir, rel)
+            if src:
+                figures.append(f"<figure><img src='{src}' alt=''><figcaption>{label}</figcaption></figure>")
+        if figures:
+            parts.append(f"<div class='shots'>{''.join(figures)}</div>")
 
     wc = r.write_check
     if wc is not None and not wc.note:
