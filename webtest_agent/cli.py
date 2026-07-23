@@ -16,7 +16,8 @@ from .history import diff_for
 from .models import FAIL, STATUS_LABEL, WARN, RunMeta
 from .report import write_reports
 from .runner import Runner
-from .scenarios import build_data_checks, build_spec_checks, build_sweep
+from .scenarios import (build_data_checks, build_spec_checks, build_sweep,
+                        build_write_checks)
 
 
 def _now() -> str:
@@ -77,6 +78,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             discovery = crawl(session, cfg, run_dir)
             print(f"   페이지 {len(discovery.pages)}개 발견")
 
+        if cfg.a11y.enabled:
+            issues = sum(len(p.a11y) for p in discovery.pages)
+            print(f"   접근성 기본 점검: 이슈 {issues}건 (정보성 — 리포트 참조)")
+
         scenarios = build_data_checks(cfg) + build_spec_checks(cfg)
         blocked = []
         if cfg.sweep.enabled:
@@ -84,9 +89,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             scenarios += sweep
             if blocked:
                 print(f"   ⛔ 차단 패턴으로 건너뛴 요소 {len(blocked)}개 (리포트에 기록)")
+        scenarios += build_write_checks(cfg)  # 쓰기 검증은 데이터 상태를 바꾸므로 마지막에
         print(f"② 시나리오 {len(scenarios)}개 생성 (데이터 검증 {len(cfg.data_checks)}"
-              f" + 명세 검증 {len(cfg.spec_checks)}"
-              f" + 스윕 {len(scenarios) - len(cfg.data_checks) - len(cfg.spec_checks)})")
+              f" + 명세 검증 {len(cfg.spec_checks)} + 쓰기 검증 {len(cfg.write_checks)}"
+              f" + 스윕 {len(scenarios) - len(cfg.data_checks) - len(cfg.spec_checks) - len(cfg.write_checks)})")
 
         results = []
         for i, sc in enumerate(scenarios, 1):
@@ -109,7 +115,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     diff = diff_for(run_dir.parent, run_dir, {r.name: r.status for r in results})
     summary = write_reports(run_dir, meta, results, blocked,
-                            [{"path": p.path, "title": p.title, "url": p.url} for p in discovery.pages],
+                            [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y}
+                             for p in discovery.pages],
                             diff=diff)
 
     print("─" * 60)

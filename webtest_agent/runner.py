@@ -8,8 +8,10 @@ from pathlib import Path
 
 from .browser import BrowserSession, save_screenshot
 from .config import AgentConfig, Step
-from .datacheck import compare, extract_table, parse_count, run_query
-from .models import FAIL, PASS, WARN, DataCheckResult, ScenarioResult, StepResult
+from .datacheck import (compare, extract_table, parse_count, run_api_query,
+                        run_query, run_scalar_query)
+from .models import (FAIL, PASS, WARN, DataCheckResult, ScenarioResult,
+                     StepResult, WriteCheckResult)
 from .scenarios import Scenario, slugify
 
 
@@ -112,6 +114,11 @@ class Runner:
             pre_url = page.url
             pre_dom = _dom_size(page)
 
+            write_pre: float | None = None
+            if scenario.kind == "write_check":
+                spec = scenario.write_spec
+                write_pre = run_scalar_query(spec.query.db, spec.query.sql)
+
             step_failed = False
             for i, step in enumerate(scenario.steps, start=1):
                 if (time.monotonic() - started) * 1000 > self.cfg.target.scenario_timeout_ms:
@@ -159,6 +166,21 @@ class Runner:
             if scenario.kind == "data_check" and not step_failed:
                 res.data_check = self._data_check(page, scenario)
                 self._shot(page, shots_dir / "result.jpg", full_page=True)
+
+            if scenario.kind == "write_check" and not step_failed and write_pre is not None:
+                spec = scenario.write_spec
+                try:
+                    post = run_scalar_query(spec.query.db, spec.query.sql)
+                    delta = post - write_pre
+                    res.write_check = WriteCheckResult(
+                        pre=write_pre, post=post, delta=delta,
+                        expected_delta=spec.expect_delta,
+                        matched=delta == spec.expect_delta,
+                    )
+                except Exception as err:
+                    res.write_check = WriteCheckResult(
+                        pre=write_pre, expected_delta=spec.expect_delta,
+                        note=f"사후 측정 실패: {_short(err)}")
 
         except ScenarioTimeout:
             hard_fail = True
@@ -232,16 +254,37 @@ class Runner:
             if not re.search(step.value, page.url):
                 raise AssertionError(f"URL이 패턴 '{step.value}'와 일치하지 않습니다 (실제: {page.url})")
 
+    def _extract_all_pages(self, page, spec) -> tuple[list[str], list[list[str]]]:
+        """표 추출 — pagination 설정 시 '다음' 버튼을 순회하며 전체 행을 수집."""
+        headers, rows = extract_table(page, spec.ui_table.selector)
+        pag = spec.ui_table.pagination
+        if not pag:
+            return headers, rows
+        for _ in range(pag.max_pages - 1):
+            nxt = page.query_selector(pag.next_selector)
+            if nxt is None or not nxt.is_visible() or nxt.is_disabled():
+                break
+            nxt.click()
+            page.wait_for_timeout(self.cfg.target.settle_ms)
+            _, more = extract_table(page, spec.ui_table.selector)
+            if not more:
+                break
+            rows += more
+        return headers, rows
+
     def _data_check(self, page, scenario: Scenario) -> DataCheckResult:
         spec = scenario.spec
         try:
-            headers, rows = extract_table(page, spec.ui_table.selector)
+            headers, rows = self._extract_all_pages(page, spec)
         except Exception as err:
             return DataCheckResult(note=f"UI 테이블 추출 실패: {_short(err)}")
         try:
-            db_cols, db_rows = run_query(spec.query.db, spec.query.sql)
+            if spec.query.api:
+                db_cols, db_rows = run_api_query(spec.query.api, self.cfg.target.base_url)
+            else:
+                db_cols, db_rows = run_query(spec.query.db, spec.query.sql)
         except Exception as err:
-            return DataCheckResult(note=f"DB 쿼리 실패: {_short(err)}")
+            return DataCheckResult(note=f"정답원(DB/API) 조회 실패: {_short(err)}")
 
         result = compare(headers, rows, spec.ui_table.columns,
                          db_cols, db_rows, spec.query.order_matters)
@@ -251,6 +294,7 @@ class Runner:
             if el is not None:
                 result.count_display = parse_count(el.inner_text())
                 if result.count_display is not None:
+                    # 페이지네이션 시 건수 표기는 전체 건수 기준 → 누적 행 수와 비교
                     result.count_display_ok = result.count_display == result.ui_count
         return result
 
@@ -279,9 +323,21 @@ class Runner:
                 dc_failed = True
                 res.reasons.append(f"건수 표기({dc.count_display}건) ≠ 실제 표 행 수({dc.ui_count}건)")
 
+        wc = res.write_check
+        wc_failed = False
+        if wc is not None:
+            if wc.note:
+                wc_failed = True
+                res.reasons.append(f"쓰기 검증 불가: {wc.note}")
+            elif not wc.matched:
+                wc_failed = True
+                res.reasons.append(
+                    f"상태 전이 불일치: 사전 {wc.pre:g} → 사후 {wc.post:g}"
+                    f" (변화 {wc.delta:+g}, 기대 {wc.expected_delta:+d})")
+
         step_failed = any(s.status == "fail" for s in res.steps)
         if (hard_fail or step_failed or res.console_errors or res.page_errors
-                or res.http_failures or dc_failed):
+                or res.http_failures or dc_failed or wc_failed):
             res.status = FAIL
         elif scenario.kind.startswith("sweep") and res.effect == "무반응":
             res.status = WARN

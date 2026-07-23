@@ -1,10 +1,13 @@
-"""UI↔DB 데이터 정합성: 쿼리 실행, 테이블 추출, 정규화·비교."""
+"""UI↔정답원(DB/API) 데이터 정합성: 쿼리·API 실행, 테이블 추출, 정규화·비교."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
+import urllib.request
 from collections import Counter
 
+from .config import ApiSpec
 from .models import DataCheckResult
 
 _NUM_STRIP = re.compile(r"[,\s₩원$]")
@@ -58,6 +61,50 @@ def run_query(db_url: str, sql: str) -> tuple[list[str], list[tuple]]:
         return cols, rows
 
     raise ValueError(f"지원하지 않는 DB URL 형식입니다: {db_url}")
+
+
+def _pick_field(obj, path: str):
+    """행 객체에서 점 표기 경로로 값을 꺼낸다 (없으면 빈 문자열)."""
+    cur = obj
+    for part in path.split("."):
+        if isinstance(cur, dict):
+            cur = cur.get(part)
+        else:
+            return ""
+    return "" if cur is None else cur
+
+
+def extract_api_rows(data, rows_path: str, columns: list[str]) -> list[tuple]:
+    """API 응답 JSON에서 행 배열을 찾아 columns 순서의 튜플로 변환한다."""
+    rows_obj = data
+    if rows_path:
+        for part in rows_path.split("."):
+            if not isinstance(rows_obj, dict) or part not in rows_obj:
+                raise ValueError(f"응답에서 rows_path '{rows_path}'를 찾을 수 없습니다")
+            rows_obj = rows_obj[part]
+    if not isinstance(rows_obj, list):
+        raise ValueError(f"rows_path '{rows_path}' 위치가 배열이 아닙니다 ({type(rows_obj).__name__})")
+    return [tuple(_pick_field(row, c) for c in columns) for row in rows_obj]
+
+
+def run_api_query(api: ApiSpec, base_url: str) -> tuple[list[str], list[tuple]]:
+    """REST API를 정답원으로 조회 — 화면이 백엔드 응답을 올바르게 표시하는지(표시 계층) 검증용."""
+    url = api.url if "://" in api.url else base_url.rstrip("/") + api.url
+    req = urllib.request.Request(url, headers=api.headers or {})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return list(api.columns), extract_api_rows(data, api.rows_path, api.columns)
+
+
+def run_scalar_query(db_url: str, sql: str) -> float:
+    """단일 수치를 반환하는 쿼리 실행 (쓰기 검증의 사전/사후 측정용)."""
+    cols, rows = run_query(db_url, sql)
+    if not rows or not rows[0]:
+        raise ValueError("쿼리 결과가 비어 있습니다 (단일 수치가 필요)")
+    try:
+        return float(rows[0][0])
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"쿼리 첫 값이 수치가 아닙니다: {rows[0][0]!r}") from err
 
 
 JS_EXTRACT_TABLE = """(table) => {

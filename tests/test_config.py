@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_load_demo_config():
     cfg = load_config(ROOT / "configs" / "demo.yaml")
     assert cfg.target.base_url.startswith("http://127.0.0.1")
-    assert len(cfg.data_checks) == 5
+    assert len(cfg.data_checks) == 7
     check = cfg.data_checks[1]
     assert check.name == "상태필터-shipped"
     assert check.ui_table.columns == ["주문번호", "고객", "상태", "금액"]
@@ -20,6 +20,69 @@ def test_load_demo_config():
     assert len(cfg.spec_checks) == 2
     assert cfg.spec_checks[0].steps[1].action == "assert_visible"
     assert cfg.target.flaky_recheck is False
+    # API 오라클
+    api_check = next(c for c in cfg.data_checks if c.name == "API대조-상태필터")
+    assert api_check.query.api is not None
+    assert api_check.query.api.rows_path == "orders"
+    assert api_check.query.api.columns == ["id", "customer", "status", "amount"]
+    # 페이지네이션
+    pag_check = next(c for c in cfg.data_checks if c.name == "페이지네이션-전체목록")
+    assert pag_check.ui_table.pagination.next_selector == "#next-page"
+    # 쓰기 검증 / a11y
+    assert len(cfg.write_checks) == 1 and cfg.write_checks[0].expect_delta == 1
+    assert cfg.a11y.enabled is True
+
+
+def test_query_db_and_api_mutually_exclusive(tmp_path):
+    p = tmp_path / "bad.yaml"
+    p.write_text(
+        """
+target: {base_url: http://x}
+data_checks:
+  - name: t
+    ui_table: {selector: "#t"}
+    query:
+      db: "sqlite:///x.db"
+      sql: "SELECT 1"
+      api: {url: /api, columns: [a]}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="하나만"):
+        load_config(p)
+
+
+def test_write_check_requires_expect_delta(tmp_path):
+    p = tmp_path / "bad.yaml"
+    p.write_text(
+        """
+target: {base_url: http://x}
+write_checks:
+  - name: t
+    steps: [{action: click, selector: "#save"}]
+    query: {db: "sqlite:///x.db", sql: "SELECT COUNT(*) FROM t"}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="expect_delta"):
+        load_config(p)
+
+
+def test_write_check_rejects_api_oracle(tmp_path):
+    p = tmp_path / "bad.yaml"
+    p.write_text(
+        """
+target: {base_url: http://x}
+write_checks:
+  - name: t
+    steps: [{action: click, selector: "#save"}]
+    query: {api: {url: /api, columns: [a]}}
+    expect_delta: 1
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="db\\+sql"):
+        load_config(p)
 
 
 def test_assert_step_requires_value(tmp_path):

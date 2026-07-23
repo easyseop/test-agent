@@ -3,7 +3,8 @@ import sqlite3
 
 import pytest
 
-from webtest_agent.datacheck import compare, normalize_cell, parse_count, run_query
+from webtest_agent.datacheck import (compare, extract_api_rows, normalize_cell,
+                                     parse_count, run_query, run_scalar_query)
 
 
 def _make_db(tmp_path):
@@ -32,6 +33,33 @@ def test_run_query_sqlalchemy_url(tmp_path):
 def test_run_query_unsupported_url():
     with pytest.raises(ValueError, match="지원하지 않는"):
         run_query("not-a-url", "SELECT 1")
+
+
+def test_run_scalar_query(tmp_path):
+    db = _make_db(tmp_path)
+    assert run_scalar_query(f"sqlite:///{db}", "SELECT COUNT(*) FROM t") == 1.0
+    with pytest.raises(ValueError, match="수치가 아닙니다"):
+        run_scalar_query(f"sqlite:///{db}", "SELECT name FROM t")
+
+
+def test_extract_api_rows():
+    data = {"result": {"orders": [
+        {"id": 1, "customer": "김민준", "meta": {"grade": "A"}},
+        {"id": 2, "customer": "이서연", "meta": {}},
+    ]}}
+    rows = extract_api_rows(data, "result.orders", ["id", "customer", "meta.grade"])
+    assert rows == [(1, "김민준", "A"), (2, "이서연", "")]
+
+
+def test_extract_api_rows_root_array():
+    assert extract_api_rows([{"a": 1}], "", ["a"]) == [(1,)]
+
+
+def test_extract_api_rows_bad_path():
+    with pytest.raises(ValueError, match="rows_path"):
+        extract_api_rows({"x": []}, "orders", ["a"])
+    with pytest.raises(ValueError, match="배열이 아닙니다"):
+        extract_api_rows({"orders": {"a": 1}}, "orders", ["a"])
 
 
 def test_normalize_number_formats():

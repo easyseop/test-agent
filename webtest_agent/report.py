@@ -11,7 +11,11 @@ from .models import FAIL, PASS, WARN, BlockedElement, RunMeta, ScenarioResult
 
 BADGE = {PASS: ("통과", "#16a34a"), WARN: ("경고", "#d97706"), FAIL: ("실패", "#dc2626")}
 KIND_LABEL = {"sweep_button": "버튼 스윕", "sweep_link": "링크 스윕",
-              "data_check": "데이터 검증", "spec_check": "명세 검증"}
+              "data_check": "데이터 검증", "spec_check": "명세 검증", "write_check": "쓰기 검증"}
+
+_A11Y_LABEL = {"img-alt": "대체 텍스트(alt) 없는 이미지", "input-label": "라벨 없는 입력 요소",
+               "empty-name": "접근 가능한 이름 없는 버튼/링크", "html-lang": "html lang 속성 없음",
+               "dup-id": "중복 id"}
 
 _DIFF_LABEL = {"new_failures": "🔴 신규 실패", "fixed": "🟢 복구됨", "still_failing": "⚠️ 계속 실패",
                "added": "새 시나리오", "removed": "사라진 시나리오"}
@@ -40,7 +44,7 @@ def write_reports(
     _write_json(run_dir / "report.json", meta, summary, results, blocked, discovery_pages, diff)
     _write_markdown(run_dir / "report.md", meta, summary, results, blocked, diff)
     _write_walkthrough(run_dir / "walkthrough.md", meta, results)
-    _write_html(run_dir / "report.html", run_dir, meta, summary, results, blocked, diff)
+    _write_html(run_dir / "report.html", run_dir, meta, summary, results, blocked, diff, discovery_pages)
     return summary
 
 
@@ -150,6 +154,10 @@ def _write_walkthrough(path, meta, results) -> None:
         if dc and not dc.note:
             mark = "일치 ✅" if dc.matched else "불일치 ❌"
             outcome.append(f"화면 {dc.ui_count}건 vs DB {dc.db_count}건 → {mark}")
+        wc = r.write_check
+        if wc and not wc.note:
+            mark = "일치 ✅" if wc.matched else "불일치 ❌"
+            outcome.append(f"상태 전이 {wc.pre:g}→{wc.post:g} (기대 {wc.expected_delta:+d}) → {mark}")
         outcome += r.reasons
         lines.append("")
         lines.append(f"→ **결과: {label}**" + (" — " + " / ".join(outcome) if outcome else ""))
@@ -245,6 +253,12 @@ def _scenario_card(run_dir: Path, index: int, r: ScenarioResult) -> str:
         parts.append(_diff_table(dc.columns, dc.missing_in_ui, "화면에 누락된 DB 행", dc.missing_total))
         parts.append(_diff_table(dc.columns, dc.unexpected_in_ui, "DB에 없는데 화면에 있는 행", dc.unexpected_total))
 
+    wc = r.write_check
+    if wc is not None and not wc.note:
+        mark = "일치 ✅" if wc.matched else "<b style='color:#b91c1c'>불일치 ❌</b>"
+        parts.append(f"<p style='font-size:13.5px'>상태 전이: 사전 {wc.pre:g} → 사후 {wc.post:g}"
+                     f" (변화 {wc.delta:+g}, 기대 {wc.expected_delta:+d}) → {mark}</p>")
+
     if r.steps:
         items = []
         for s in r.steps:
@@ -293,7 +307,24 @@ def _diff_html(diff: dict | None) -> str:
             f"{_esc(diff['prev_run'])})</span></h2><div class='card'>{body}</div>")
 
 
-def _write_html(path, run_dir, meta, summary, results, blocked, diff=None) -> None:
+def _a11y_html(discovery_pages: list[dict]) -> str:
+    pages = [p for p in (discovery_pages or []) if p.get("a11y")]
+    total = sum(len(p["a11y"]) for p in pages)
+    if not pages:
+        return ""
+    items = []
+    for p in pages:
+        counts: dict[str, int] = {}
+        for issue in p["a11y"]:
+            counts[issue.get("type", "?")] = counts.get(issue.get("type", "?"), 0) + 1
+        detail = " · ".join(f"{_A11Y_LABEL.get(t, t)} {c}건" for t, c in counts.items())
+        items.append(f"<li><code>{_esc(p.get('path', ''))}</code> — {detail}</li>")
+    return (f"<h2>접근성 기본 점검 <span style='color:#9ca3af;font-size:13px'>"
+            f"(간이 내장 검사 · 정보성, 판정에 미반영 · 총 {total}건)</span></h2>"
+            f"<div class='card'><ul class='info' style='font-size:13.5px'>{''.join(items)}</ul></div>")
+
+
+def _write_html(path, run_dir, meta, summary, results, blocked, diff=None, discovery_pages=None) -> None:
     version = f" ({_esc(meta.app_version)})" if meta.app_version else ""
     rows = "".join([
         f"<tr><td>대상</td><td>{_esc(meta.base_url)}{version}</td></tr>",
@@ -326,6 +357,7 @@ def _write_html(path, run_dir, meta, summary, results, blocked, diff=None) -> No
 </p>
 {_diff_html(diff)}
 {blocked_html}
+{_a11y_html(discovery_pages)}
 <h2>시나리오 결과</h2>
 {cards}
 <p style="color:#9ca3af;font-size:12px;margin-top:24px">webtest-agent 자동 생성 리포트 ·

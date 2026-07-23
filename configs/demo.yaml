@@ -98,6 +98,36 @@ data_checks:
       db: sqlite:///demo_app/demo.db
       sql: "SELECT id, status, category FROM orders WHERE category = '전자기기' AND status = 'delivered'"
 
+  - name: API대조-상태필터
+    description: 화면 표가 백엔드 API 응답을 그대로 표시하는지 검증 (표시 계층 — API가 정답원)
+    page: /
+    steps:
+      - {action: select, selector: "#status", value: "shipped"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 금액]
+    query:
+      api:
+        url: "/api/orders?status=shipped"
+        rows_path: orders
+        columns: [id, customer, status, amount]
+
+  - name: 페이지네이션-전체목록
+    description: 페이지를 넘기며 수집한 전체 행이 DB 전체와 일치해야 한다 (per_page=50, 3페이지)
+    page: "/?per_page=50"
+    steps:
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 주문일]
+      count_selector: "#result-count"
+      pagination: {next_selector: "#next-page", max_pages: 10}
+    query:
+      db: sqlite:///demo_app/demo.db
+      sql: "SELECT id, created_at FROM orders"
+
 # 명세 기반 단언 시나리오 — "의도된 동작"을 단언(assert_*)으로 직접 명시
 spec_checks:
   - name: 요약보기-합계표시
@@ -116,6 +146,27 @@ spec_checks:
       - {action: click, selector: "#apply"}
       - {action: assert_url, value: "status=pending"}
       - {action: assert_visible, selector: "#orders-table"}
+
+# 쓰기(상태 전이) 검증 — 폼 제출 전후 DB 변화량 확인. 반드시 시드/스테이징 DB에서만.
+write_checks:
+  - name: 주문등록
+    description: 주문 등록 폼을 제출하면 DB에 주문이 정확히 1건 늘어야 한다
+    page: /new
+    steps:
+      - {action: fill, selector: "#customer", value: "쓰기검증고객"}
+      - {action: select, selector: "#status", value: "pending"}
+      - {action: select, selector: "#category", value: "식품"}
+      - {action: fill, selector: "#amount", value: "12345"}
+      - {action: fill, selector: "#date", value: "2026-07-01"}
+      - {action: click, selector: "#save"}
+      - {action: wait_for, selector: "#orders-table"}
+    query:
+      db: sqlite:///demo_app/demo.db
+      sql: "SELECT COUNT(*) FROM orders"
+    expect_delta: 1
+
+a11y:
+  enabled: true   # 접근성 기본 점검 (간이·정보성)
 
 report:
   title: 주문 대시보드 자동 테스트 (데모)

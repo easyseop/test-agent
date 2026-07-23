@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>주문 등록 — 주문 관리 대시보드</title>
+<style>
+body{font-family:'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;margin:0;background:#f5f6f8;color:#1f2937}
+.wrap{max-width:480px;margin:0 auto;padding:24px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px 24px}
+label{display:block;font-size:13.5px;margin:10px 0 4px}
+input,select{width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px}
+button{margin-top:16px;padding:8px 18px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-size:14px;cursor:pointer}
+.error{color:#dc2626;font-size:13px;margin-top:10px}
+a{font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>주문 등록</h1>
+  <form class="card" method="post" action="/new">
+    <label for="customer">고객명</label>
+    <input id="customer" name="customer">
+    <label for="status">상태</label>
+    <select id="status" name="status">
+      {% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+    </select>
+    <label for="category">카테고리</label>
+    <select id="category" name="category">
+      {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+    </select>
+    <label for="amount">금액</label>
+    <input id="amount" name="amount" inputmode="numeric">
+    <label for="date">주문일</label>
+    <input id="date" name="date" placeholder="YYYY-MM-DD">
+    <button id="save" type="submit">저장</button>
+    {% if error %}<p id="form-error" class="error">{{ error }}</p>{% endif %}
+    <p><a id="cancel" href="/">← 목록으로</a></p>
+  </form>
+</div>
+</body>
+</html>

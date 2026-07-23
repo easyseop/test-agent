@@ -43,6 +43,16 @@ class DataCheckResult:
 
 
 @dataclass
+class WriteCheckResult:
+    pre: float = 0
+    post: float = 0
+    delta: float = 0
+    expected_delta: int = 0
+    matched: bool = False
+    note: str = ""
+
+
+@dataclass
 class ScenarioResult:
     name: str
     kind: str                   # sweep_button | sweep_link | data_check
@@ -58,6 +68,7 @@ class ScenarioResult:
     downloads: list[str] = field(default_factory=list)
     effect: str = ""            # 스윕: 관찰된 효과 요약
     data_check: DataCheckResult | None = None
+    write_check: WriteCheckResult | None = None
     video: str = ""
     trace: str = ""
     flaky: bool = False          # 실패 후 재실행에서 통과 → 간헐 의심

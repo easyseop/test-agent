@@ -9,8 +9,9 @@ import csv
 import io
 import os
 import sqlite3
+from urllib.parse import urlencode
 
-from flask import Flask, Response, redirect, render_template, request, session
+from flask import Flask, Response, jsonify, redirect, render_template, request, session
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE, "demo.db")
@@ -97,11 +98,69 @@ def fetch(args) -> list[tuple]:
 @app.route("/")
 def index():
     rows = fetch(request.args)
+    total = len(rows)
+    per_page = request.args.get("per_page", type=int) or 0
+    page_no = max(request.args.get("page", type=int) or 1, 1)
+    last_page = 1
+    prev_url = next_url = ""
+    if per_page > 0:
+        last_page = max((total + per_page - 1) // per_page, 1)
+        page_no = min(page_no, last_page)
+        rows = rows[(page_no - 1) * per_page: page_no * per_page]
+
+        def page_url(n: int) -> str:
+            params = request.args.to_dict()
+            params["page"] = str(n)
+            return "/?" + urlencode(params)
+
+        prev_url = page_url(page_no - 1) if page_no > 1 else ""
+        next_url = page_url(page_no + 1) if page_no < last_page else ""
     return render_template(
-        "index.html", rows=rows, count=len(rows),
+        "index.html", rows=rows, count=total,
         statuses=STATUSES, categories=CATEGORIES, args=request.args, bug=BUG,
         auth_user=session.get("user") if AUTH else None,
+        per_page=per_page, page_no=page_no, last_page=last_page,
+        prev_url=prev_url, next_url=next_url,
     )
+
+
+@app.route("/api/orders")
+def api_orders():
+    rows = fetch(request.args)
+    return jsonify({
+        "count": len(rows),
+        "orders": [
+            {"id": r[0], "customer": r[1], "status": r[2],
+             "category": r[3], "amount": r[4], "created_at": r[5]}
+            for r in rows
+        ],
+    })
+
+
+@app.route("/new", methods=["GET", "POST"])
+def new_order():
+    error = ""
+    if request.method == "POST":
+        customer = (request.form.get("customer") or "").strip()
+        status = request.form.get("status") or ""
+        category = request.form.get("category") or ""
+        amount = request.form.get("amount") or ""
+        created_at = request.form.get("date") or ""
+        if not customer or not amount or status not in STATUSES or category not in CATEGORIES:
+            error = "모든 항목을 올바르게 입력해주세요."
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            try:
+                conn.execute(
+                    "INSERT INTO orders (customer, status, category, amount, created_at)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (customer, status, category, int(amount), created_at or "2026-07-01"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return redirect("/")
+    return render_template("new.html", statuses=STATUSES, categories=CATEGORIES, error=error)
 
 
 @app.route("/about")

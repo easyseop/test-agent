@@ -89,17 +89,35 @@ class SweepConfig:
 
 
 @dataclass
+class PaginationSpec:
+    """표가 여러 페이지로 나뉠 때 '다음' 버튼을 순회하며 전체 행을 수집한다."""
+    next_selector: str
+    max_pages: int = 20
+
+
+@dataclass
 class UITableSpec:
     selector: str
     columns: list[str] | None = None
     count_selector: str | None = None
+    pagination: PaginationSpec | None = None
+
+
+@dataclass
+class ApiSpec:
+    """REST API 응답을 정답원으로 쓰는 대조 — 화면이 백엔드 응답을 올바르게 표시하는지(표시 계층) 검증."""
+    url: str                      # 상대 경로면 target.base_url 기준
+    columns: list[str] = field(default_factory=list)   # 행 객체에서 뽑을 필드 (점 표기 지원: owner.name)
+    rows_path: str = ""           # 응답 JSON에서 행 배열 위치 (점 표기, 빈값 = 루트가 배열)
+    headers: dict[str, str] = field(default_factory=dict)  # 예: Authorization — ${환경변수} 치환 지원
 
 
 @dataclass
 class QuerySpec:
-    db: str
-    sql: str
+    db: str = ""
+    sql: str = ""
     order_matters: bool = False
+    api: ApiSpec | None = None    # db+sql 대신 API를 정답원으로 사용
 
 
 @dataclass
@@ -119,6 +137,27 @@ class SpecCheckSpec:
     page: str = "/"
     description: str = ""
     steps: list[Step] = field(default_factory=list)
+
+
+@dataclass
+class WriteCheckSpec:
+    """쓰기(상태 전이) 검증 — 스텝 실행 전후의 DB 스칼라 값 변화량을 검증한다.
+
+    query.sql은 단일 수치를 반환해야 한다 (예: SELECT COUNT(*) FROM orders).
+    반드시 스테이징/시드 DB에서만 사용할 것.
+    """
+    name: str
+    page: str = "/"
+    description: str = ""
+    steps: list[Step] = field(default_factory=list)
+    query: QuerySpec | None = None
+    expect_delta: int = 0
+
+
+@dataclass
+class A11yConfig:
+    """접근성 기본 점검(간이·내장) — 크롤링한 페이지에 정보성으로 보고 (판정에 영향 없음)."""
+    enabled: bool = False
 
 
 @dataclass
@@ -142,7 +181,9 @@ class AgentConfig:
     sweep: SweepConfig
     data_checks: list[DataCheckSpec]
     spec_checks: list[SpecCheckSpec]
+    write_checks: list[WriteCheckSpec]
     report: ReportConfig
+    a11y: A11yConfig = field(default_factory=A11yConfig)
     auth: AuthConfig | None = None
     output_dir: str = "runs"
     config_path: str = ""
@@ -153,6 +194,36 @@ def _sub(data: dict, key: str) -> dict:
     if not isinstance(v, dict):
         raise ConfigError(f"'{key}' 섹션은 매핑이어야 합니다")
     return v
+
+
+def _parse_query(q_raw, where: str, allow_api: bool) -> QuerySpec:
+    """query 파싱 — (db+sql) 또는 api 중 정확히 하나."""
+    if not q_raw:
+        raise ConfigError(f"{where}: query가 필요합니다 (db+sql 또는 api)")
+    has_db = bool(q_raw.get("db") or q_raw.get("sql"))
+    api_raw = q_raw.get("api")
+    if has_db and api_raw:
+        raise ConfigError(f"{where}: query는 db+sql 또는 api 중 하나만 지정하세요")
+    if api_raw:
+        if not allow_api:
+            raise ConfigError(f"{where}: 이 검증에는 api 정답원을 쓸 수 없습니다 (db+sql만 가능)")
+        if not api_raw.get("url") or not api_raw.get("columns"):
+            raise ConfigError(f"{where}: query.api에는 url과 columns가 필요합니다")
+        api = ApiSpec(
+            url=_expand_env(str(api_raw["url"]), f"{where}.query.api.url"),
+            columns=[str(c) for c in api_raw["columns"]],
+            rows_path=str(api_raw.get("rows_path", "")),
+            headers={str(k): _expand_env(str(v), f"{where}.query.api.headers.{k}")
+                     for k, v in (api_raw.get("headers") or {}).items()},
+        )
+        return QuerySpec(api=api, order_matters=bool(q_raw.get("order_matters", False)))
+    if not q_raw.get("db") or not q_raw.get("sql"):
+        raise ConfigError(f"{where}: query.db와 query.sql이 필요합니다")
+    return QuerySpec(
+        db=_expand_env(str(q_raw["db"]), f"{where}.query.db"),
+        sql=str(q_raw["sql"]),
+        order_matters=bool(q_raw.get("order_matters", False)),
+    )
 
 
 def load_config(path: str | Path) -> AgentConfig:
@@ -203,20 +274,23 @@ def load_config(path: str | Path) -> AgentConfig:
         if not ut_raw or not ut_raw.get("selector"):
             raise ConfigError(f"{where}: ui_table.selector가 필요합니다")
         columns = ut_raw.get("columns")
+        pagination = None
+        pg_raw = ut_raw.get("pagination")
+        if pg_raw:
+            if not pg_raw.get("next_selector"):
+                raise ConfigError(f"{where}: pagination.next_selector가 필요합니다")
+            pagination = PaginationSpec(
+                next_selector=str(pg_raw["next_selector"]),
+                max_pages=int(pg_raw.get("max_pages", 20)),
+            )
         ui_table = UITableSpec(
             selector=str(ut_raw["selector"]),
             columns=[str(x) for x in columns] if columns else None,
             count_selector=str(ut_raw["count_selector"]) if ut_raw.get("count_selector") else None,
+            pagination=pagination,
         )
 
-        q_raw = raw.get("query")
-        if not q_raw or not q_raw.get("db") or not q_raw.get("sql"):
-            raise ConfigError(f"{where}: query.db와 query.sql이 필요합니다")
-        query = QuerySpec(
-            db=_expand_env(str(q_raw["db"]), f"{where}.query.db"),
-            sql=str(q_raw["sql"]),
-            order_matters=bool(q_raw.get("order_matters", False)),
-        )
+        query = _parse_query(raw.get("query"), where, allow_api=True)
 
         checks.append(DataCheckSpec(
             name=name,
@@ -243,6 +317,28 @@ def load_config(path: str | Path) -> AgentConfig:
             steps=spec_steps,
         ))
 
+    writes: list[WriteCheckSpec] = []
+    for i, raw in enumerate(data.get("write_checks") or []):
+        where = f"write_checks[{i}]"
+        if not isinstance(raw, dict) or not raw.get("name"):
+            raise ConfigError(f"{where}: name이 필요합니다")
+        w_steps = [Step.from_dict(sd, f"{where}.steps[{j}]")
+                   for j, sd in enumerate(raw.get("steps") or [])]
+        if not w_steps:
+            raise ConfigError(f"{where}: steps가 최소 1개 필요합니다")
+        if "expect_delta" not in raw:
+            raise ConfigError(f"{where}: expect_delta가 필요합니다 (예: 1)")
+        writes.append(WriteCheckSpec(
+            name=str(raw["name"]),
+            page=str(raw.get("page", "/")),
+            description=str(raw.get("description", "")),
+            steps=w_steps,
+            query=_parse_query(raw.get("query"), where, allow_api=False),
+            expect_delta=int(raw["expect_delta"]),
+        ))
+
+    a11y = A11yConfig(enabled=bool(_sub(data, "a11y").get("enabled", False)))
+
     auth: AuthConfig | None = None
     a_raw = data.get("auth")
     if a_raw:
@@ -266,7 +362,9 @@ def load_config(path: str | Path) -> AgentConfig:
         sweep=sweep,
         data_checks=checks,
         spec_checks=specs,
+        write_checks=writes,
         report=report,
+        a11y=a11y,
         auth=auth,
         output_dir=str(data.get("output_dir", "runs")),
         config_path=str(p),

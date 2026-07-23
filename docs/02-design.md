@@ -20,12 +20,12 @@
 | # | 검증 방법 | 정답의 출처 | v1 구현 |
 |---|----------|-----------|:--:|
 | ① | 오류 신호 기반 — 콘솔 에러·페이지 예외·HTTP≥400·무반응·크래시 | 보편 상식 | ✅ 버튼 스윕 |
-| ② | 독립 정답원 대조 — UI 표시 데이터 ↔ DB 직접 쿼리 | DB | ✅ **핵심 기능** |
+| ② | 독립 정답원 대조 — UI 표시 데이터 ↔ 정답원 | DB(SQL) 또는 **REST API**(`query.api`, 표시 계층 검증) | ✅ **핵심 기능** (페이지네이션 순회 지원) |
 | ③ | 명세 기반 단언 (기대 동작 명시) | 사람/LLM 명세 | ✅ v2 구현 — `spec_checks` + `assert_visible/assert_text/assert_url` (명세 작성은 사람 또는 `/generate-tests`) |
 | ④ | 불변식 기반 — 예: 표시 건수 = 실제 행 수 | 항상 참인 성질 | ✅ 일부 (건수 불변식) |
-| ⑤ | 상태 전이 (쓰기 액션의 DB 반영) | 전후 DB 상태 | v3 |
-| ⑥ | 기준선/스냅샷 대조 (시각 회귀) | 과거 실행 | v3 |
-| ⑦ | 사람/LLM 판단 | 사람 감각 | 참고 코멘트만 (v2) |
+| ⑤ | 상태 전이 (쓰기 액션의 DB 반영) | 전후 DB 상태 | ✅ 구현 — `write_checks` (스텝 전후 스칼라 변화량, 시드/스테이징 전용) |
+| ⑥ | 기준선/스냅샷 대조 (시각 회귀) | 과거 실행 | 백로그 (기준선 승인 플로 결정 필요) |
+| ⑦ | 사람/LLM 판단 | 사람 감각 | 참고 코멘트만 (v2) — 접근성 기본 점검(간이·정보성)은 `a11y.enabled`로 구현 |
 
 **LLM 역할 규칙** (D3): 입력 3종 = 설명서(기대값의 근거) + 소스코드(셀렉터·스키마 좌표) + 크롤링 인벤토리(실존 확인). **기대값의 근거는 설명서에서, 코드는 좌표 참조용** — 구현 버그가 기대값에 복제되는 동어반복 함정 방지. 판정(채점)은 LLM이 하지 않는다.
 
@@ -94,10 +94,18 @@ data_checks:
       selector: "#orders-table"
       columns: [주문번호, 고객, 상태, 금액]   # 비교할 UI 헤더명
       count_selector: "#result-count"        # (선택) 건수 표기 불변식 검증
+      pagination:                            # (선택) '다음' 버튼 순회하며 전체 행 수집
+        {next_selector: "#next-page", max_pages: 10}
     query:
       db: sqlite:///demo_app/demo.db         # 상대 경로는 CWD 기준
       sql: "SELECT id, customer, status, amount FROM orders WHERE status='shipped'"
       order_matters: false
+      # 또는 REST API를 정답원으로 (db+sql 대신):
+      # api:
+      #   url: /api/orders?status=shipped    # 상대 경로는 base_url 기준
+      #   rows_path: orders                  # 응답 JSON에서 행 배열 위치 (점 표기)
+      #   columns: [id, customer, status, amount]   # 행 객체 필드 (점 표기 지원)
+      #   headers: {Authorization: "Bearer ${API_TOKEN}"}
 
 spec_checks:                        # (v2) 명세 기반 단언 시나리오 — 검증 방법 ③
   - name: 요약보기-합계표시
@@ -106,6 +114,16 @@ spec_checks:                        # (v2) 명세 기반 단언 시나리오 —
       - {action: click, selector: "#summary-btn"}
       - {action: assert_visible, selector: "#summary"}
       - {action: assert_text, selector: "#summary", value: "합계"}
+
+write_checks:                       # 쓰기(상태 전이) 검증 — 검증 방법 ⑤. 시드/스테이징 전용
+  - name: 주문등록
+    page: /new
+    steps: [...폼 입력..., {action: click, selector: "#save"}]
+    query: {db: "sqlite:///demo_app/demo.db", sql: "SELECT COUNT(*) FROM orders"}  # 단일 수치
+    expect_delta: 1                 # (사후 - 사전) 기대 변화량
+
+a11y:
+  enabled: false                    # 접근성 기본 점검(간이·내장) — 정보성, 판정에 미반영
 
 report:
   title: 주문 대시보드 자동 테스트
@@ -141,7 +159,9 @@ output_dir: runs
 
 ## 6. 데이터 정합성 비교 규칙
 
-UI 추출(thead th→헤더, tbody tr td→행) → `columns` 헤더명으로 열 선택 → 정규화(공백 압축, 콤마·통화기호 제거 후 숫자 표준화 `12,300원→12300`, 날짜는 문자열 유지) → 기본 멀티셋(Counter) 비교, `order_matters` 옵션 → 결과: 일치 여부·UI/DB 건수·누락/초과 행 샘플≤10. `count_selector` 지정 시 표시 건수=실제 행 수 불변식 추가 검증. **v1 한계: 페이지네이션 미대응**(단일 페이지 표 기준).
+UI 추출(thead th→헤더, tbody tr td→행) → `columns` 헤더명으로 열 선택 → 정규화(공백 압축, 콤마·통화기호 제거 후 숫자 표준화 `12,300원→12300`, 날짜는 문자열 유지) → 기본 멀티셋(Counter) 비교, `order_matters` 옵션 → 결과: 일치 여부·UI/DB 건수·누락/초과 행 샘플≤10. `count_selector` 지정 시 표시 건수=실제 행 수 불변식 추가 검증. `pagination` 지정 시 '다음' 버튼을 순회하며 전체 행을 누적한 뒤 대조.
+
+**API 오라클의 검증 범위** — `query.api`는 "화면이 백엔드 응답을 올바르게 표시하는가"(표시 계층)를 검증한다. UI와 API가 같은 백엔드 로직을 쓰면 백엔드 버그는 양쪽에 동일하게 나타나 잡히지 않는다 — 백엔드 로직까지 검증하려면 SQL 오라클을 쓴다. 엔티티를 JSON으로 저장하거나 목록이 검색엔진을 경유하는 앱(오픈메타데이터 등)은 API 오라클이 실용적 선택.
 
 ## 7. 증적 체계 (3+1단)
 
@@ -199,4 +219,5 @@ runs/<타임스탬프>/
 
 **v2 완료(2026-07-23)**: 명세 단언 스텝+spec_checks(③), 전회차 diff, flaky 재확인 옵션, IDE 커맨드(/generate-tests·/analyze-report).
 **v3 1차 완료(2026-07-23)**: 로그인 인증(auth.steps + storage_state 재사용), 스크린샷 마스킹(mask_selectors), SQLAlchemy 경유 DB 확장(PostgreSQL/MySQL), `${환경변수}` 치환.
-**잔여 백로그**: a11y 검사(axe — 의존성 결정 필요), 쓰기 검증(⑤), 시각 회귀(⑥), 페이지네이션, 병렬 실행, 크로스 브라우저, 슬랙/메일 전송, **REST API 오라클**(`query.api` — 오픈메타데이터처럼 엔티티를 DB에 JSON으로 저장하고 목록·검색이 검색엔진(ES)을 경유하는 앱은 SQL 대신 자체 REST API 응답을 정답원으로 쓰는 것이 적합).
+**v3 2차 완료(2026-07-23)**: REST API 오라클(`query.api` — 오픈메타데이터류 대비), 페이지네이션 순회(`ui_table.pagination`), 쓰기 검증(⑤, `write_checks`), 접근성 기본 점검(간이·정보성, `a11y.enabled`).
+**잔여 백로그**: axe 기반 정식 a11y(의존성 결정 필요), 시각 회귀(⑥ — 기준선 승인 플로 결정 필요), 병렬 실행, 크로스 브라우저(firefox/webkit 설치 필요), 슬랙/메일 전송(외부 자격 필요).

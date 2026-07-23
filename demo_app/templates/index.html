@@ -59,6 +59,7 @@ th{background:#f9fafb}
 </form>
 
 <div class="toolbar">
+  <a id="new-order" class="btn" href="/new">주문 등록</a>
   <button id="refresh" type="button" onclick="location.reload()">새로고침</button>
   <button id="summary-btn" type="button" onclick="{{ 'showSummry()' if bug else 'showSummary()' }}">요약 보기</button>
   <a id="export" class="btn" href="/export.csv?{{ request.query_string.decode() }}">CSV 내려받기</a>
@@ -82,6 +83,22 @@ th{background:#f9fafb}
     {% endfor %}
   </tbody>
 </table>
+
+{% if per_page %}
+<div class="toolbar" id="pager">
+  {% if prev_url %}
+    <button id="prev-page" type="button" onclick="location.href='{{ prev_url }}'">이전</button>
+  {% else %}
+    <button id="prev-page" type="button" disabled>이전</button>
+  {% endif %}
+  <span>{{ page_no }} / {{ last_page }} 페이지</span>
+  {% if next_url %}
+    <button id="next-page" type="button" onclick="location.href='{{ next_url }}'">다음</button>
+  {% else %}
+    <button id="next-page" type="button" disabled>다음</button>
+  {% endif %}
+</div>
+{% endif %}
 
 <script>
 function showSummary() {

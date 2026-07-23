@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .config import AgentConfig, DataCheckSpec, Step
+from .config import AgentConfig, DataCheckSpec, Step, WriteCheckSpec
 from .discovery import Discovery
 from .models import BlockedElement
 
@@ -20,12 +20,13 @@ def slugify(name: str, max_len: int = 60) -> str:
 @dataclass
 class Scenario:
     name: str
-    kind: str                    # sweep_button | sweep_link | data_check
+    kind: str                    # sweep_button | sweep_link | data_check | spec_check | write_check
     page: str
     steps: list[Step] = field(default_factory=list)
     description: str = ""
     element_text: str = ""
     spec: DataCheckSpec | None = None
+    write_spec: WriteCheckSpec | None = None
 
 
 def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario], list[BlockedElement]]:
@@ -101,4 +102,19 @@ def build_spec_checks(cfg: AgentConfig) -> list[Scenario]:
             description=spec.description,
         )
         for spec in cfg.spec_checks
+    ]
+
+
+def build_write_checks(cfg: AgentConfig) -> list[Scenario]:
+    """쓰기(상태 전이) 검증 시나리오 — 스텝 전후 DB 스칼라 변화량 검증."""
+    return [
+        Scenario(
+            name=spec.name,
+            kind="write_check",
+            page=spec.page,
+            steps=list(spec.steps),
+            description=spec.description,
+            write_spec=spec,
+        )
+        for spec in cfg.write_checks
     ]

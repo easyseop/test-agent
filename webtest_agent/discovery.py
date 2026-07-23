@@ -46,6 +46,33 @@ JS_INVENTORY = """() => {
 }"""
 
 
+JS_A11Y = """() => {
+  const issues = [];
+  const snippet = (el) => (el.outerHTML || '').slice(0, 80);
+  document.querySelectorAll('img:not([alt])').forEach(el =>
+    issues.push({ type: 'img-alt', detail: snippet(el) }));
+  document.querySelectorAll(
+    'input:not([type=hidden]):not([type=submit]):not([type=button]), select, textarea'
+  ).forEach(el => {
+    const labelled = el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')
+      || (el.id && document.querySelector('label[for="' + CSS.escape(el.id) + '"]'))
+      || el.closest('label');
+    if (!labelled) issues.push({ type: 'input-label', detail: el.id || el.name || snippet(el) });
+  });
+  document.querySelectorAll('button, a[href]').forEach(el => {
+    if (!(el.innerText || '').trim() && !el.getAttribute('aria-label'))
+      issues.push({ type: 'empty-name', detail: snippet(el) });
+  });
+  if (!document.documentElement.getAttribute('lang'))
+    issues.push({ type: 'html-lang', detail: '' });
+  const ids = {};
+  document.querySelectorAll('[id]').forEach(el => { ids[el.id] = (ids[el.id] || 0) + 1; });
+  Object.entries(ids).filter(([, c]) => c > 1)
+    .forEach(([id, c]) => issues.push({ type: 'dup-id', detail: '#' + id + ' x' + c }));
+  return issues;
+}"""
+
+
 @dataclass
 class PageInfo:
     url: str
@@ -53,6 +80,7 @@ class PageInfo:
     title: str
     screenshot: str
     elements: dict = field(default_factory=dict)
+    a11y: list = field(default_factory=list)
 
 
 @dataclass
@@ -102,6 +130,7 @@ def crawl(session: BrowserSession, cfg: AgentConfig, run_dir: Path) -> Discovery
                 continue
             page.wait_for_timeout(cfg.target.settle_ms)
             inventory = page.evaluate(JS_INVENTORY)
+            a11y_issues = page.evaluate(JS_A11Y) if cfg.a11y.enabled else []
             shot_rel = f"screenshots/discovery_{len(discovery.pages):02d}.jpg"
             save_screenshot(page, run_dir / shot_rel, full_page=True,
                             mask_selectors=cfg.report.mask_selectors)
@@ -109,6 +138,7 @@ def crawl(session: BrowserSession, cfg: AgentConfig, run_dir: Path) -> Discovery
                 url=page.url, path=norm,
                 title=inventory.get("title", ""),
                 screenshot=shot_rel, elements=inventory,
+                a11y=a11y_issues,
             ))
             if depth < cfg.crawl.max_depth:
                 for link in inventory.get("links", []):
