@@ -1,0 +1,106 @@
+# 데모앱(주문 관리 대시보드) 테스트 설정
+# 실제 앱에 적용할 때는 이 파일을 본떠 새 YAML을 작성하면 됩니다.
+#
+# 정답 쿼리(query.sql)의 근거는 앱 '설명서'의 의도이며, 구현 코드를 베끼지 않습니다.
+# (데모앱 설명서: 상태 필터는 해당 상태의 주문만, 날짜 범위는 경계일 포함 조회한다)
+
+target:
+  base_url: http://127.0.0.1:5057
+  settle_ms: 400
+  nav_timeout_ms: 10000
+  scenario_timeout_ms: 60000
+  app_version: demo-app (seed 20260501)
+
+crawl:
+  enabled: true
+  max_pages: 6
+  max_depth: 2
+
+button_sweep:
+  enabled: true
+  include_links: true
+  max_per_page: 30
+  avoid_patterns: ["삭제", "delete", "remove", "탈퇴", "결제", "pay", "logout", "로그아웃"]
+
+data_checks:
+  - name: 전체목록
+    description: 필터 없이 조회하면 전체 주문이 그대로 표시되고 건수 표기도 일치해야 한다
+    page: /
+    steps:
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 카테고리, 금액, 주문일]
+      count_selector: "#result-count"
+    query:
+      db: sqlite:///demo_app/demo.db
+      sql: "SELECT id, customer, status, category, amount, created_at FROM orders"
+
+  - name: 상태필터-shipped
+    description: 상태를 shipped로 필터하면 shipped 상태의 주문만 표시되어야 한다
+    page: /
+    steps:
+      - {action: select, selector: "#status", value: "shipped"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 금액]
+      count_selector: "#result-count"
+    query:
+      db: sqlite:///demo_app/demo.db
+      sql: "SELECT id, customer, status, amount FROM orders WHERE status = 'shipped'"
+
+  - name: 날짜범위-6월
+    description: 2026-06-01 ~ 2026-06-30 조회 시 경계일을 포함한 6월 주문 전체가 표시되어야 한다
+    page: /
+    steps:
+      - {action: fill, selector: "#date-from", value: "2026-06-01"}
+      - {action: fill, selector: "#date-to", value: "2026-06-30"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 주문일]
+      count_selector: "#result-count"
+    query:
+      db: sqlite:///demo_app/demo.db
+      sql: "SELECT id, created_at FROM orders WHERE created_at BETWEEN '2026-06-01' AND '2026-06-30'"
+
+  - name: 고객검색-김
+    description: 고객명에 '김'을 검색하면 이름에 '김'이 포함된 주문만 표시되어야 한다
+    page: /
+    steps:
+      - {action: fill, selector: "#q", value: "김"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객]
+      count_selector: "#result-count"
+    query:
+      db: sqlite:///demo_app/demo.db
+      sql: "SELECT id, customer FROM orders WHERE customer LIKE '%김%'"
+
+  - name: 복합필터-전자기기-delivered
+    description: 카테고리와 상태를 동시에 적용했을 때 두 조건의 교집합만 표시되어야 한다
+    page: /
+    steps:
+      - {action: select, selector: "#category", value: "전자기기"}
+      - {action: select, selector: "#status", value: "delivered"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 상태, 카테고리]
+      count_selector: "#result-count"
+    query:
+      db: sqlite:///demo_app/demo.db
+      sql: "SELECT id, status, category FROM orders WHERE category = '전자기기' AND status = 'delivered'"
+
+report:
+  title: 주문 대시보드 자동 테스트 (데모)
+  video: true
+  trace: true
+
+output_dir: runs
