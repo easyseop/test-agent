@@ -37,7 +37,9 @@ def test_write_reports(tmp_path):
                    finished_at="2026-07-23 10:01:00", duration_ms=60000,
                    browser_version="139.0", playwright_version="1.50",
                    python_version="3.11", agent_version="0.1.0")
-    summary = write_reports(tmp_path, meta, _sample_results(), [], [])
+    diff = {"prev_run": "20260722-090000", "new_failures": ["상태필터-shipped"],
+            "fixed": [], "still_failing": [], "added": [], "removed": []}
+    summary = write_reports(tmp_path, meta, _sample_results(), [], [], diff=diff)
 
     assert summary == {"total": 3, "pass": 1, "warn": 1, "fail": 1}
     for name in ("report.json", "report.md", "report.html", "walkthrough.md"):
@@ -45,7 +47,8 @@ def test_write_reports(tmp_path):
 
     html = (tmp_path / "report.html").read_text(encoding="utf-8")
     assert "상태필터-shipped" in html and "통과" in html and "실패" in html
+    assert "전회차 대비" in html
     md = (tmp_path / "report.md").read_text(encoding="utf-8")
-    assert "UI↔DB 불일치" in md
+    assert "UI↔DB 불일치" in md and "신규 실패" in md
     walkthrough = (tmp_path / "walkthrough.md").read_text(encoding="utf-8")
     assert "페이지에 접속한다" in walkthrough

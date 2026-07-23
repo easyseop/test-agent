@@ -10,7 +10,11 @@ from pathlib import Path
 from .models import FAIL, PASS, WARN, BlockedElement, RunMeta, ScenarioResult
 
 BADGE = {PASS: ("통과", "#16a34a"), WARN: ("경고", "#d97706"), FAIL: ("실패", "#dc2626")}
-KIND_LABEL = {"sweep_button": "버튼 스윕", "sweep_link": "링크 스윕", "data_check": "데이터 검증"}
+KIND_LABEL = {"sweep_button": "버튼 스윕", "sweep_link": "링크 스윕",
+              "data_check": "데이터 검증", "spec_check": "명세 검증"}
+
+_DIFF_LABEL = {"new_failures": "🔴 신규 실패", "fixed": "🟢 복구됨", "still_failing": "⚠️ 계속 실패",
+               "added": "새 시나리오", "removed": "사라진 시나리오"}
 
 _MAX_EMBED_BYTES = 400_000
 
@@ -30,26 +34,43 @@ def write_reports(
     results: list[ScenarioResult],
     blocked: list[BlockedElement],
     discovery_pages: list[dict],
+    diff: dict | None = None,
 ) -> dict:
     summary = summarize(results)
-    _write_json(run_dir / "report.json", meta, summary, results, blocked, discovery_pages)
-    _write_markdown(run_dir / "report.md", meta, summary, results, blocked)
+    _write_json(run_dir / "report.json", meta, summary, results, blocked, discovery_pages, diff)
+    _write_markdown(run_dir / "report.md", meta, summary, results, blocked, diff)
     _write_walkthrough(run_dir / "walkthrough.md", meta, results)
-    _write_html(run_dir / "report.html", run_dir, meta, summary, results, blocked)
+    _write_html(run_dir / "report.html", run_dir, meta, summary, results, blocked, diff)
     return summary
 
 
 # ── JSON ──────────────────────────────────────────────────────────
 
-def _write_json(path, meta, summary, results, blocked, discovery_pages) -> None:
+def _write_json(path, meta, summary, results, blocked, discovery_pages, diff) -> None:
     payload = {
         "meta": asdict(meta),
         "summary": summary,
+        "diff": diff,
         "blocked_elements": [asdict(b) for b in blocked],
         "scenarios": [r.to_dict() for r in results],
         "discovery_pages": discovery_pages,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _diff_lines(diff: dict | None) -> list[str]:
+    if not diff:
+        return []
+    lines = ["", f"## 전회차 대비 (직전 실행: {diff['prev_run']})"]
+    changed = False
+    for key in ("new_failures", "fixed", "still_failing", "added", "removed"):
+        names = diff.get(key) or []
+        if names:
+            changed = True
+            lines.append(f"- {_DIFF_LABEL[key]} {len(names)}건: {', '.join(names)}")
+    if not changed:
+        lines.append("- 변화 없음")
+    return lines
 
 
 # ── Markdown ──────────────────────────────────────────────────────
@@ -65,9 +86,10 @@ def _meta_lines(meta: RunMeta, summary: dict) -> list[str]:
     ]
 
 
-def _write_markdown(path, meta, summary, results, blocked) -> None:
+def _write_markdown(path, meta, summary, results, blocked, diff=None) -> None:
     lines = [f"# {meta.title}", ""]
     lines += _meta_lines(meta, summary)
+    lines += _diff_lines(diff)
     lines += ["", "| # | 시나리오 | 종류 | 판정 | 소요 | 비고 |", "|---|---|---|---|---|---|"]
     for i, r in enumerate(results, 1):
         note = r.reasons[0] if r.reasons else (r.effect or "")
@@ -256,7 +278,22 @@ def _scenario_card(run_dir: Path, index: int, r: ScenarioResult) -> str:
     return "".join(parts)
 
 
-def _write_html(path, run_dir, meta, summary, results, blocked) -> None:
+def _diff_html(diff: dict | None) -> str:
+    if not diff:
+        return ""
+    items = []
+    for key in ("new_failures", "fixed", "still_failing", "added", "removed"):
+        names = diff.get(key) or []
+        if names:
+            items.append(f"<li>{_DIFF_LABEL[key]} <b>{len(names)}</b>건: "
+                         f"{_esc(', '.join(names))}</li>")
+    body = f"<ul style='font-size:13.5px'>{''.join(items)}</ul>" if items \
+        else "<p style='font-size:13.5px;color:#6b7280'>변화 없음</p>"
+    return (f"<h2>전회차 대비 <span style='color:#9ca3af;font-size:13px'>(직전 실행: "
+            f"{_esc(diff['prev_run'])})</span></h2><div class='card'>{body}</div>")
+
+
+def _write_html(path, run_dir, meta, summary, results, blocked, diff=None) -> None:
     version = f" ({_esc(meta.app_version)})" if meta.app_version else ""
     rows = "".join([
         f"<tr><td>대상</td><td>{_esc(meta.base_url)}{version}</td></tr>",
@@ -287,6 +324,7 @@ def _write_html(path, run_dir, meta, summary, results, blocked) -> None:
   <span class="badge" style="background:{BADGE[FAIL][1]}">실패 <b>{summary['fail']}</b></span>
   &nbsp;<span style="color:#6b7280">/ 총 {summary['total']}개 시나리오</span>
 </p>
+{_diff_html(diff)}
 {blocked_html}
 <h2>시나리오 결과</h2>
 {cards}

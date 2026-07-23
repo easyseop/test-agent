@@ -98,6 +98,25 @@ data_checks:
       db: sqlite:///demo_app/demo.db
       sql: "SELECT id, status, category FROM orders WHERE category = '전자기기' AND status = 'delivered'"
 
+# 명세 기반 단언 시나리오 — "의도된 동작"을 단언(assert_*)으로 직접 명시
+spec_checks:
+  - name: 요약보기-합계표시
+    description: 요약 보기를 누르면 표시된 주문 금액 합계가 화면에 나타나야 한다
+    page: /
+    steps:
+      - {action: click, selector: "#summary-btn"}
+      - {action: assert_visible, selector: "#summary"}
+      - {action: assert_text, selector: "#summary", value: "합계"}
+
+  - name: 상태필터-URL반영
+    description: 조회를 실행하면 선택한 필터가 주소(URL) 쿼리에 반영되어야 한다
+    page: /
+    steps:
+      - {action: select, selector: "#status", value: "pending"}
+      - {action: click, selector: "#apply"}
+      - {action: assert_url, value: "status=pending"}
+      - {action: assert_visible, selector: "#orders-table"}
+
 report:
   title: 주문 대시보드 자동 테스트 (데모)
   video: true

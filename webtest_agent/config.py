@@ -11,9 +11,13 @@ class ConfigError(ValueError):
     """설정 파일 오류."""
 
 
-STEP_ACTIONS = {"goto", "click", "fill", "select", "check", "press", "wait_for", "wait_ms"}
-_NEEDS_SELECTOR = {"click", "fill", "select", "check", "press", "wait_for"}
-_NEEDS_VALUE = {"goto", "fill", "select", "press", "wait_ms"}
+STEP_ACTIONS = {
+    "goto", "click", "fill", "select", "check", "press", "wait_for", "wait_ms",
+    "assert_visible", "assert_text", "assert_url",
+}
+_NEEDS_SELECTOR = {"click", "fill", "select", "check", "press", "wait_for",
+                   "assert_visible", "assert_text"}
+_NEEDS_VALUE = {"goto", "fill", "select", "press", "wait_ms", "assert_text", "assert_url"}
 
 
 @dataclass
@@ -45,6 +49,7 @@ class TargetConfig:
     nav_timeout_ms: int = 10000
     scenario_timeout_ms: int = 60000
     app_version: str = ""
+    flaky_recheck: bool = False  # 실패 시 1회 재실행해 간헐(flaky) 여부 표시
 
 
 @dataclass
@@ -91,6 +96,15 @@ class DataCheckSpec:
 
 
 @dataclass
+class SpecCheckSpec:
+    """명세 기반 단언 시나리오 — 스텝(액션+단언)만으로 구성."""
+    name: str
+    page: str = "/"
+    description: str = ""
+    steps: list[Step] = field(default_factory=list)
+
+
+@dataclass
 class ReportConfig:
     title: str = "웹 자동 테스트 리포트"
     video: bool = True
@@ -103,6 +117,7 @@ class AgentConfig:
     crawl: CrawlConfig
     sweep: SweepConfig
     data_checks: list[DataCheckSpec]
+    spec_checks: list[SpecCheckSpec]
     report: ReportConfig
     output_dir: str = "runs"
     config_path: str = ""
@@ -132,6 +147,7 @@ def load_config(path: str | Path) -> AgentConfig:
         nav_timeout_ms=int(t.get("nav_timeout_ms", 10000)),
         scenario_timeout_ms=int(t.get("scenario_timeout_ms", 60000)),
         app_version=str(t.get("app_version", "")),
+        flaky_recheck=bool(t.get("flaky_recheck", False)),
     )
 
     c = _sub(data, "crawl")
@@ -186,6 +202,22 @@ def load_config(path: str | Path) -> AgentConfig:
             query=query,
         ))
 
+    specs: list[SpecCheckSpec] = []
+    for i, raw in enumerate(data.get("spec_checks") or []):
+        where = f"spec_checks[{i}]"
+        if not isinstance(raw, dict) or not raw.get("name"):
+            raise ConfigError(f"{where}: name이 필요합니다")
+        spec_steps = [Step.from_dict(sd, f"{where}.steps[{j}]")
+                      for j, sd in enumerate(raw.get("steps") or [])]
+        if not spec_steps:
+            raise ConfigError(f"{where}: steps가 최소 1개 필요합니다")
+        specs.append(SpecCheckSpec(
+            name=str(raw["name"]),
+            page=str(raw.get("page", "/")),
+            description=str(raw.get("description", "")),
+            steps=spec_steps,
+        ))
+
     r = _sub(data, "report")
     report = ReportConfig(
         title=str(r.get("title", "웹 자동 테스트 리포트")),
@@ -198,6 +230,7 @@ def load_config(path: str | Path) -> AgentConfig:
         crawl=crawl,
         sweep=sweep,
         data_checks=checks,
+        spec_checks=specs,
         report=report,
         output_dir=str(data.get("output_dir", "runs")),
         config_path=str(p),

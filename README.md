@@ -19,7 +19,10 @@
 | 버튼·링크가 동작하는가 | 전수 클릭(스윕) 후 신호 관찰 | 콘솔 에러/페이지 예외 → **실패**, HTTP≥400 → **실패**, 무반응 → **경고** |
 | 필터 조회 데이터가 맞는가 | 화면 표 추출 ↔ **DB에 직접 실행한 정답 쿼리** 비교 (정규화 후) | 불일치 시 누락/초과 행 샘플과 함께 **실패** |
 | 건수 표기가 맞는가 | 화면의 "N건" ↔ 실제 표 행 수 (불변식) | 불일치 → **실패** |
+| 기획 의도대로 동작하는가 | `spec_checks` — 단언 스텝(`assert_visible`/`assert_text`/`assert_url`)으로 기대 동작 명시 | 단언 위반 → **실패** |
 | 위험 버튼 안전장치 | `삭제/결제/로그아웃` 등 차단 패턴 매칭 요소는 클릭하지 않음 | 리포트에 차단 목록 기록 |
+
+또한 매 실행마다 **직전 실행과 비교(diff)** 해 "신규 실패 / 복구 / 계속 실패"를 리포트와 CLI에 표시하고, `target.flaky_recheck: true`면 실패 시나리오를 1회 재실행해 간헐(flaky) 의심을 경고로 구분합니다.
 
 ## 설치
 
@@ -90,6 +93,19 @@ data_checks:
 
 로그인이 필요한 앱은 `steps` 앞부분에 `goto → fill(아이디/비밀번호) → click(로그인)`을 넣어 표현할 수 있습니다.
 
+DB 대조가 필요 없는 **기획 의도 검증**은 `spec_checks`에 단언으로 적습니다:
+
+```yaml
+spec_checks:
+  - name: 요약보기-합계표시
+    description: 요약 보기를 누르면 금액 합계가 화면에 나타나야 한다
+    page: /
+    steps:
+      - {action: click, selector: "#summary-btn"}
+      - {action: assert_visible, selector: "#summary"}
+      - {action: assert_text, selector: "#summary", value: "합계"}
+```
+
 ### 안전 수칙
 
 - 반드시 **테스트/스테이징 환경 + 재생성 가능한(시드) DB**에서 실행하세요. 운영 DB는 read-only 계정으로 조회 검증만.
@@ -106,10 +122,10 @@ data_checks:
 
 상세 배경은 [docs/02-design.md](docs/02-design.md) §1·§8 참조.
 
-## v1 한계
+## 현재 한계
 
 - 데이터 대조는 단일 페이지 표 기준 (페이지네이션 미대응)
 - DB는 SQLite만 (PostgreSQL/MySQL은 커넥터 추가 예정)
-- 재시도 없음 — 간헐 실패는 `wait_for` 스텝 보강으로 예방
+- 기본 재시도 없음(결정성 우선) — 간헐 실패는 `wait_for` 보강으로 예방하고, 필요 시 `target.flaky_recheck: true`로 재실행 기반 flaky 표시 사용
 
 로드맵과 백로그는 [docs/02-design.md](docs/02-design.md) §13, 검토 배경은 [docs/01-review.md](docs/01-review.md) 참조.

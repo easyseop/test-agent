@@ -13,7 +13,7 @@
 | D4 | v1 구현 범위 | **엔진 전체**(크롤러·스윕·UI↔DB 대조·증적·리포트) + 데모앱 + LLM 워크플로 스캐폴드(`CLAUDE.md` 스키마, `/generate-tests`·`/analyze-report` 커맨드). **`knowledge/` 위키 콘텐츠는 사용자가 직접 구축**(§8은 그 가이드) |
 | D5 | 인증 | v1 범위 외. 스텝 DSL(goto/fill/click)로 로그인 시나리오 표현 가능한 구조만 확보 |
 | D6 | 리포트 전달 | 파일 산출 (HTML 단일파일 + MD + JSON + walkthrough + webm + trace) |
-| D7 | flaky 정책 | v1은 **재시도 없음**. 명시적 대기(`wait_for`)와 안정화 대기로 예방. 재실행·flaky 표시는 v2 |
+| D7 | flaky 정책 | 기본 **재시도 없음**. 명시적 대기(`wait_for`)와 안정화 대기로 예방. v2: `target.flaky_recheck: true` 설정 시 실패 시나리오를 1회 재실행해 통과하면 '간헐(flaky) 의심' **경고**로 표시(최초 실패 증적 유지) — 기본 꺼짐 |
 
 ## 1. 검증 방법 분류 (오라클 기준)와 배치
 
@@ -21,7 +21,7 @@
 |---|----------|-----------|:--:|
 | ① | 오류 신호 기반 — 콘솔 에러·페이지 예외·HTTP≥400·무반응·크래시 | 보편 상식 | ✅ 버튼 스윕 |
 | ② | 독립 정답원 대조 — UI 표시 데이터 ↔ DB 직접 쿼리 | DB | ✅ **핵심 기능** |
-| ③ | 명세 기반 단언 (기대 동작 명시) | 사람/LLM 명세 | v2 (LLM이 명세 생성) |
+| ③ | 명세 기반 단언 (기대 동작 명시) | 사람/LLM 명세 | ✅ v2 구현 — `spec_checks` + `assert_visible/assert_text/assert_url` (명세 작성은 사람 또는 `/generate-tests`) |
 | ④ | 불변식 기반 — 예: 표시 건수 = 실제 행 수 | 항상 참인 성질 | ✅ 일부 (건수 불변식) |
 | ⑤ | 상태 전이 (쓰기 액션의 DB 반영) | 전후 DB 상태 | v3 |
 | ⑥ | 기준선/스냅샷 대조 (시각 회귀) | 과거 실행 | v3 |
@@ -60,6 +60,7 @@ target:
   nav_timeout_ms: 10000
   scenario_timeout_ms: 60000        # 시나리오 상한 — 무한 대기 방지(초과=실패)
   app_version: ""                   # (선택) 대상 앱 버전/커밋 — 리포트 메타에 기록
+  flaky_recheck: false              # (v2) 실패 시 1회 재실행해 간헐 의심 표시
 
 crawl:
   enabled: true
@@ -90,6 +91,14 @@ data_checks:
       sql: "SELECT id, customer, status, amount FROM orders WHERE status='shipped'"
       order_matters: false
 
+spec_checks:                        # (v2) 명세 기반 단언 시나리오 — 검증 방법 ③
+  - name: 요약보기-합계표시
+    page: /
+    steps:
+      - {action: click, selector: "#summary-btn"}
+      - {action: assert_visible, selector: "#summary"}
+      - {action: assert_text, selector: "#summary", value: "합계"}
+
 report:
   title: 주문 대시보드 자동 테스트
   video: true
@@ -102,7 +111,9 @@ output_dir: runs
 
 ## 4. 스텝 DSL
 
-`goto`(value=경로) · `click` · `fill`(value) · `select`(value) · `check` · `press`(value=키) · `wait_for` · `wait_ms`(value=ms). Playwright 자동 대기 위에서 실행, 스텝 실패 = 시나리오 실패 + 실패 시점 스크린샷.
+`goto`(value=경로) · `click` · `fill`(value) · `select`(value) · `check` · `press`(value=키) · `wait_for` · `wait_ms`(value=ms) · **단언**: `assert_visible`(요소 표시) · `assert_text`(selector+value: 텍스트 포함) · `assert_url`(value: URL 정규식). Playwright 자동 대기 위에서 실행, 스텝 실패(단언 위반 포함) = 시나리오 실패 + 실패 시점 스크린샷.
+
+단언만으로 구성된 시나리오는 `spec_checks:` 섹션에 정의한다(§3) — 검증 방법 ③의 실행 형태.
 
 ## 5. 판정 규칙
 
@@ -153,6 +164,8 @@ runs/<타임스탬프>/
 
 리포트 메타데이터(재현성): 대상 URL, 앱 버전(설정 제공 시), 브라우저·Playwright·Python 버전, 실행 시각·소요 시간.
 
+**전회차 대비 diff** (v2): 같은 `output_dir`의 직전 실행(report.json)과 비교해 신규 실패/복구/계속 실패/새·사라진 시나리오를 리포트(md·html·json)와 CLI에 표시 — 회귀 추적용. 앱별로 `output_dir`을 분리하면 diff도 앱별로 격리된다.
+
 ## 10. 데모앱 명세
 
 **주문 관리 대시보드** (`demo_app/`, Flask+SQLite, 포트 5057). `orders(id, customer, status, category, amount, created_at)` — `seed.py` 고정 시드 120건(2026-05-01~06-30, 경계일 데이터 보장). UI: 필터(상태·카테고리·고객 검색·날짜 범위) + 조회/초기화/새로고침/요약 보기/CSV 버튼 + `#orders-table` + `#result-count` + About + **`전체 삭제` 버튼(차단 패턴 시연용)**.
@@ -171,6 +184,8 @@ runs/<타임스탬프>/
 
 유닛(pytest, 브라우저 불필요: 정규화·비교·설정·리포트) + e2e(`scripts/run_demo.sh [--bug]`) — §10 수용 기준 확인.
 
-## 13. 백로그 (v2/v3)
+## 13. 백로그
 
-v2: LLM 명세 단언 생성·실패 요약(IDE 커맨드), 전회차 diff, flaky 표시, a11y 검사(axe) · v3: 쓰기 검증(⑤), 시각 회귀(⑥), 페이지네이션, 병렬 실행, 크로스 브라우저, 마스킹, 로그인 세션 재사용, 슬랙/메일 전송.
+**v2 완료(2026-07-23)**: 명세 단언 스텝+spec_checks(③), 전회차 diff, flaky 재확인 옵션, IDE 커맨드(/generate-tests·/analyze-report).
+**v2 잔여**: a11y 검사(axe — 의존성 도입 결정 필요).
+**v3**: 쓰기 검증(⑤), 시각 회귀(⑥), 페이지네이션, 병렬 실행, 크로스 브라우저, 마스킹, 로그인 세션 재사용, 슬랙/메일 전송.

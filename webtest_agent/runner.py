@@ -1,6 +1,7 @@
 """시나리오 실행(Execute)과 판정(Verify)."""
 from __future__ import annotations
 
+import re
 import shutil
 import time
 from pathlib import Path
@@ -32,6 +33,9 @@ def describe_step(step: Step) -> str:
         "press": f"{sel}에서 {step.value} 키를 누른다",
         "wait_for": f"{sel} 요소가 나타날 때까지 기다린다",
         "wait_ms": f"{step.value}ms 동안 기다린다",
+        "assert_visible": f"{sel} 요소가 화면에 보이는지 확인한다",
+        "assert_text": f"{sel} 요소에 '{step.value}' 텍스트가 있는지 확인한다",
+        "assert_url": f"주소(URL)가 '{step.value}' 패턴과 일치하는지 확인한다",
     }[step.action]
 
 
@@ -55,12 +59,12 @@ class Runner:
             return ""
         return Path(path).relative_to(self.run_dir).as_posix()
 
-    def run(self, scenario: Scenario, index: int) -> ScenarioResult:
+    def run(self, scenario: Scenario, index: int, suffix: str = "") -> ScenarioResult:
         res = ScenarioResult(
             name=scenario.name, kind=scenario.kind,
             page=scenario.page, description=scenario.description,
         )
-        slug = f"{index:02d}_{slugify(scenario.name)}"
+        slug = f"{index:02d}_{slugify(scenario.name)}" + (f"_{suffix}" if suffix else "")
         shots_dir = self.run_dir / "screenshots" / slug
         video_tmp = (self.run_dir / "videos" / f"_tmp_{slug}") if self.cfg.report.video else None
         started = time.monotonic()
@@ -198,6 +202,19 @@ class Runner:
             page.wait_for_selector(step.selector, state="visible", timeout=10000)
         elif action == "wait_ms":
             page.wait_for_timeout(int(step.value))
+        elif action == "assert_visible":
+            try:
+                page.wait_for_selector(step.selector, state="visible", timeout=3000)
+            except Exception:
+                raise AssertionError(f"요소 '{step.selector}'가 화면에 보이지 않습니다")
+        elif action == "assert_text":
+            actual = page.locator(step.selector).first.inner_text(timeout=3000)
+            if step.value not in actual:
+                raise AssertionError(
+                    f"기대 텍스트 '{step.value}'가 없습니다 (실제: '{actual[:80]}')")
+        elif action == "assert_url":
+            if not re.search(step.value, page.url):
+                raise AssertionError(f"URL이 패턴 '{step.value}'와 일치하지 않습니다 (실제: {page.url})")
 
     def _data_check(self, page, scenario: Scenario) -> DataCheckResult:
         spec = scenario.spec

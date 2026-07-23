@@ -60,6 +60,7 @@ class ScenarioResult:
     data_check: DataCheckResult | None = None
     video: str = ""
     trace: str = ""
+    flaky: bool = False          # 실패 후 재실행에서 통과 → 간헐 의심
     duration_ms: int = 0
 
     def to_dict(self) -> dict:

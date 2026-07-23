@@ -12,10 +12,11 @@ from . import __version__
 from .browser import BrowserSession
 from .config import AgentConfig, ConfigError, load_config
 from .discovery import Discovery, crawl
-from .models import FAIL, STATUS_LABEL, RunMeta
+from .history import diff_for
+from .models import FAIL, STATUS_LABEL, WARN, RunMeta
 from .report import write_reports
 from .runner import Runner
-from .scenarios import build_data_checks, build_sweep
+from .scenarios import build_data_checks, build_spec_checks, build_sweep
 
 
 def _now() -> str:
@@ -64,32 +65,52 @@ def cmd_run(args: argparse.Namespace) -> int:
             discovery = crawl(session, cfg, run_dir)
             print(f"   페이지 {len(discovery.pages)}개 발견")
 
-        scenarios = build_data_checks(cfg)
+        scenarios = build_data_checks(cfg) + build_spec_checks(cfg)
         blocked = []
         if cfg.sweep.enabled:
             sweep, blocked = build_sweep(discovery, cfg)
             scenarios += sweep
             if blocked:
                 print(f"   ⛔ 차단 패턴으로 건너뛴 요소 {len(blocked)}개 (리포트에 기록)")
-        print(f"② 시나리오 {len(scenarios)}개 생성 (데이터 검증 {len(cfg.data_checks)} + 스윕 {len(scenarios) - len(cfg.data_checks)})")
+        print(f"② 시나리오 {len(scenarios)}개 생성 (데이터 검증 {len(cfg.data_checks)}"
+              f" + 명세 검증 {len(cfg.spec_checks)}"
+              f" + 스윕 {len(scenarios) - len(cfg.data_checks) - len(cfg.spec_checks)})")
 
         runner = Runner(session, cfg, run_dir)
         results = []
         for i, sc in enumerate(scenarios, 1):
             print(f"③ [{i}/{len(scenarios)}] {sc.name} ... ", end="", flush=True)
             res = runner.run(sc, i)
+            if res.status == FAIL and cfg.target.flaky_recheck:
+                print("실패 → 재실행(간헐 확인) ... ", end="", flush=True)
+                retry = runner.run(sc, i, suffix="retry")
+                if retry.status != FAIL:
+                    res.status = WARN
+                    res.flaky = True
+                    evidence = retry.video or retry.trace or "재실행 증적 없음"
+                    res.reasons.insert(0, f"간헐(flaky) 의심: 재실행에서는 {STATUS_LABEL[retry.status]}"
+                                          f" — 최초 실패 증적 유지, 재실행 증적: {evidence}")
             results.append(res)
-            print(STATUS_LABEL[res.status])
+            print(STATUS_LABEL[res.status] + (" (flaky 의심)" if res.flaky else ""))
 
     meta.finished_at = _now()
     meta.duration_ms = int((_time.monotonic() - t0) * 1000)
 
+    diff = diff_for(run_dir.parent, run_dir, {r.name: r.status for r in results})
     summary = write_reports(run_dir, meta, results, blocked,
-                            [{"path": p.path, "title": p.title, "url": p.url} for p in discovery.pages])
+                            [{"path": p.path, "title": p.title, "url": p.url} for p in discovery.pages],
+                            diff=diff)
 
     print("─" * 60)
     print(f"실행 완료: 통과 {summary['pass']} · 경고 {summary['warn']} · 실패 {summary['fail']}"
           f" (총 {summary['total']}, {meta.duration_ms / 1000:.1f}s)")
+    if diff:
+        parts = []
+        for key, label in (("new_failures", "신규 실패"), ("fixed", "복구"),
+                           ("still_failing", "계속 실패"), ("added", "새 시나리오")):
+            if diff.get(key):
+                parts.append(f"{label} {len(diff[key])}")
+        print(f"전회차({diff['prev_run']}) 대비: " + (" · ".join(parts) if parts else "변화 없음"))
     for r in results:
         if r.status == FAIL:
             reason = r.reasons[0] if r.reasons else ""

@@ -88,3 +88,17 @@ def build_data_checks(cfg: AgentConfig) -> list[Scenario]:
         )
         for spec in cfg.data_checks
     ]
+
+
+def build_spec_checks(cfg: AgentConfig) -> list[Scenario]:
+    """명세 기반 단언 시나리오 — 스텝 실패(단언 위반 포함)와 신호로만 판정."""
+    return [
+        Scenario(
+            name=spec.name,
+            kind="spec_check",
+            page=spec.page,
+            steps=list(spec.steps),
+            description=spec.description,
+        )
+        for spec in cfg.spec_checks
+    ]
