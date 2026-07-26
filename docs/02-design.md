@@ -148,6 +148,10 @@ output_dir: runs
 
 `query.sql`의 SELECT 컬럼 ↔ `ui_table.columns` **순서 1:1 대응** (개수 불일치 = 설정 오류로 실패).
 `query.db`는 `sqlite:///`(내장, read-only) 외에 SQLAlchemy URL(`postgresql://…`, `mysql+pymysql://…`)도 지원 — sqlalchemy+드라이버 설치 필요. 접속 문자열의 비밀번호는 `${환경변수}`로.
+`query.sql`은 문자열·인용 식별자·주석을 제외한 코드 기준으로 단일
+`SELECT`/`WITH` 문장만 허용한다. 설정 로딩과 실제 DB 실행 양쪽에서
+쓰기·DDL·관리 키워드와 다중 문장을 거부한다. 이 방어와 별개로 PostgreSQL·MySQL
+계정은 데이터베이스 권한 자체를 read-only로 제한한다.
 `mask_selectors`는 **스크린샷에만** 적용된다(비디오·트레이스는 미적용 — 공유 범위 주의).
 인증 상태 파일은 실행 종료 시 기본 삭제된다. 디버깅을 위한 명시적 보관은
 `--preserve-auth-state`를 사용하며, 보관 파일은 Git·리포트·공유 폴더에서 제외한다.
@@ -239,6 +243,7 @@ runs/<타임스탬프>/
 - **민감정보**: 실제 앱의 증적에 개인정보가 담길 수 있음 — 스크린샷은 `report.mask_selectors`로 마스킹(v3 구현), 비디오·트레이스는 마스킹 미적용이므로 공유 범위 주의.
 - **인증 상태**: `auth_state.json`은 0600 권한으로 생성하고 기본 자동 삭제. 명시적으로 보관한 파일은 로그인 세션과 동일한 민감정보로 취급.
 - **쓰기 경계**: 자동 스윕의 저장·삭제·결제·발송·초대·배포·로그아웃 최소 차단 목록은 설정에서 제거 불가. `write_checks`는 `--allow-write-checks` 승인 후에만 실행하며 Runner도 동일 정책을 재검사.
+- **DB 정답원**: `query.sql`은 설정+실행 이중 경계에서 단일 `SELECT/WITH`만 허용. DB 계정의 read-only 권한은 별도 필수.
 - **큰 정수**: UI·API·DB 셀은 binary float로 바꾸지 않고 문자열로 정규화. JSON 소수도 `Decimal`로 읽어 유효 자릿수를 보존.
 - **초기 로드 신호**: 시나리오 첫 `page.goto` 중 콘솔·페이지·HTTP 오류도 판정에 포함. 정상으로 합의된 리소스 실패만 `target.ignore_http_error_patterns` 정규식으로 제외.
 - **전체 deadline**: `target.run_timeout_ms` 기본 30분. 브라우저 시작·인증·접속·크롤링·시나리오 전체에 적용하고, 초과한 부분 실행은 `infra_error`와 종료코드 2로 처리.
@@ -259,4 +264,5 @@ runs/<타임스탬프>/
 **v3 6차 완료(2026-07-27)**: float 없는 숫자 문자열 정규화, JSON 소수 정밀도 보존, 2^53 초과 주문번호 UI·API·DB E2E.
 **v3 7차 완료(2026-07-27)**: 첫 page.goto 오류 판정, HTTP 오류 URL 허용 목록과 정규식 검증, 초기 콘솔 오류 Chromium 검출 데모.
 **v3 8차 완료(2026-07-27)**: 기본 30분 전체 deadline, 크롤링·Runner 제한 연동, 부분 실행의 infra_error·종료코드 2와 전용 E2E.
+**v3 9차 완료(2026-07-27)**: SQL 정답원 단일 `SELECT/WITH` 제한, 쓰기·DDL·관리 키워드와 다중 문장의 설정+실행 이중 차단.
 **잔여 백로그**: axe 기반 정식 a11y(의존성 결정 필요), 병렬 실행, 크로스 브라우저(firefox/webkit 설치 필요). — 이로써 검증 방법 ①~⑥이 모두 엔진에 구현됨 (⑦은 설계상 참고용).

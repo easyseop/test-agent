@@ -6,7 +6,7 @@
 > 작업 시작 기준 커밋: `75a985cce8639430f82abbf1aa3fb7dcfb812684`
 
 - 안전 구현 커밋: `f16fe28` (`Harden Runner execution safety`)
-- GitHub 상태: 로컬에서 1커밋 앞섬, 아직 push하지 않음
+- GitHub 상태: 원격보다 로컬 커밋이 앞서며, 아직 push하지 않음
 
 ## 1. 프로젝트 역할
 
@@ -79,6 +79,15 @@
 - 컨텍스트 종료로 브라우저와 기본 인증 상태 파일 정리
 - `configs/demo-deadline.yaml`과 `--deadline` 실브라우저 모드 추가
 
+DB 정답원 SQL 안전 경계도 완료했다.
+
+- `query.sql`은 단일 `SELECT` 또는 `WITH` 조회만 허용
+- 설정 로딩 단계에서 쓰기·DDL·관리 키워드와 다중 문장 차단
+- 설정 객체를 우회해도 DB 실행 직전에 같은 정책 재검사
+- 문자열·인용 식별자·주석 안의 키워드와 세미콜론은 오탐하지 않음
+- SQLite 파일 read-only 연결 유지
+- PostgreSQL·MySQL은 Runner 검사와 별도로 read-only DB 계정 사용 필수
+
 ## 3. 검증 결과
 
 ```bash
@@ -88,7 +97,7 @@ python3 -m pytest tests/ -q
 ./scripts/run_demo.sh --auth
 ```
 
-- 전체 유닛 테스트: 65개 통과
+- 전체 유닛 테스트: 72개 통과
 - 새 회귀 테스트:
   - 대상 연결 실패 → `infra_error`
   - 시나리오 0개 → `infra_error`
@@ -103,8 +112,10 @@ python3 -m pytest tests/ -q
   - 첫 page.goto 콘솔·페이지·HTTP 오류 판정
   - 허용 HTTP URL 필터와 잘못된 정규식 차단
   - 전체 deadline의 설정 검증·Runner 메시지·partial-success 차단
+  - SQL 단일 문장·SELECT/WITH 시작·쓰기/관리 키워드 차단
+  - 주석·문자열 안의 위험 단어 오탐 방지와 실행 직전 재검사
 - 실제 Chromium E2E:
-  - 기본 읽기 전용 데모: 19개 통과, 위험 동작 4개 차단, DB 123건 유지
+  - 최신 기본 읽기 전용 데모: 19개 통과, 위험 동작 4개 차단, DB 123건 유지
   - `--write` 승인 데모: 20개 통과, 주문 등록 1건 증가 검증
   - 버그 주입 데모: 알려진 버그를 4개 실패 시나리오로 검출, 종료코드 1
   - 로그인 데모: 11개 통과, 위험 동작 4개 차단, 경고 0, 실패 0
@@ -126,7 +137,9 @@ python3 -m pytest tests/ -q
 - `webtest_agent/browser.py`: 인증 상태 생명주기와 자동 삭제
 - `webtest_agent/runner.py`: 인증 상태 파일 0600 생성
 - `webtest_agent/safety.py`: 제거 불가능한 자동 탐색 최소 차단 목록
-- `webtest_agent/datacheck.py`: 큰 정수·JSON 소수의 무손실 정규화
+- `webtest_agent/safety.py`: SQL 단일 조회 문장과 쓰기·관리 키워드 차단
+- `webtest_agent/datacheck.py`: 큰 정수·JSON 소수의 무손실 정규화, SQL 실행 직전 재검사
+- `webtest_agent/config.py`: SQL 설정 단계 조회 전용 검증
 - `webtest_agent/config.py`: 허용 HTTP 오류 URL 정규식 설정·검증
 - `webtest_agent/runner.py`: 첫 page.goto 오류 포함과 HTTP 허용 패턴 필터
 - `demo_app/seed.py`: 2^53 초과 주문번호 고정 데이터
@@ -161,7 +174,8 @@ Lab adapter와 웹 콘솔은 시나리오 수만 보지 말고 이 상태를 우
 
 ## 6. 다음 개발 단위
 
-Runner의 현재 안전 P0 목록은 완료됐다. 다음 시스템 단위는 두 가지 중 하나다.
+Runner의 현재 안전 P0와 DB 정답원 SQL 안전 경계는 완료됐다. 다음 시스템
+단위는 두 가지 중 하나다.
 
 1. 실제 대상 URL·테스트 계정 범위를 받아 사이트별 YAML과 테스트 계획 작성
 2. Lab adapter가 Runner의 `meta.status`(`passed/failed/infra_error`)를 우선 해석하도록 연결 검증

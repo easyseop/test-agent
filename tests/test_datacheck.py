@@ -5,6 +5,7 @@ import pytest
 
 from webtest_agent.datacheck import (compare, extract_api_rows, normalize_cell,
                                      parse_count, run_query, run_scalar_query)
+from webtest_agent.safety import validate_read_only_sql
 
 
 def _make_db(tmp_path):
@@ -33,6 +34,40 @@ def test_run_query_sqlalchemy_url(tmp_path):
 def test_run_query_unsupported_url():
     with pytest.raises(ValueError, match="지원하지 않는"):
         run_query("not-a-url", "SELECT 1")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DELETE FROM t",
+        "SELECT * FROM t; DROP TABLE t",
+        "WITH changed AS (DELETE FROM t RETURNING *) SELECT * FROM changed",
+        "PRAGMA writable_schema = 1",
+    ],
+)
+def test_read_only_sql_rejects_write_admin_and_multiple_statements(sql):
+    with pytest.raises(ValueError, match="조회 SQL"):
+        validate_read_only_sql(sql)
+
+
+def test_read_only_sql_allows_cte_and_ignores_literals_and_comments():
+    sql = """
+    -- DELETE FROM hidden
+    WITH selected AS (
+      SELECT id, 'DROP TABLE t; still text' AS note
+      FROM t
+    )
+    SELECT id, note FROM selected;
+    """
+    assert validate_read_only_sql(sql) == sql
+
+
+def test_run_query_rechecks_sql_before_opening_database(tmp_path):
+    db = _make_db(tmp_path)
+    with pytest.raises(ValueError, match="SELECT 또는 WITH"):
+        run_query(f"sqlite:///{db}", "DELETE FROM t RETURNING id")
+    cols, rows = run_query(f"sqlite:///{db}", "SELECT COUNT(*) AS count FROM t")
+    assert cols == ["count"] and rows == [(1,)]
 
 
 def test_run_scalar_query(tmp_path):

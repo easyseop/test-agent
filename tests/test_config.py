@@ -100,6 +100,25 @@ data_checks:
         load_config(p)
 
 
+def test_query_sql_must_be_a_single_read_only_statement(tmp_path):
+    p = tmp_path / "unsafe-query.yaml"
+    p.write_text(
+        """
+target: {base_url: http://x}
+data_checks:
+  - name: unsafe
+    ui_table: {selector: "#t"}
+    query:
+      db: "postgresql://example.invalid/db"
+      sql: "SELECT * FROM orders; DELETE FROM orders"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="단일 문장"):
+        load_config(p)
+
+
 def test_write_check_requires_expect_delta(tmp_path):
     p = tmp_path / "bad.yaml"
     p.write_text(

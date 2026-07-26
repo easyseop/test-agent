@@ -8,7 +8,8 @@ from pathlib import Path
 
 import yaml
 
-from .safety import HARD_BLOCK_PATTERNS, merge_avoid_patterns
+from .safety import (HARD_BLOCK_PATTERNS, merge_avoid_patterns,
+                     validate_read_only_sql)
 
 
 class ConfigError(ValueError):
@@ -259,9 +260,14 @@ def _parse_query(q_raw, where: str, allow_api: bool) -> QuerySpec:
         return QuerySpec(api=api, order_matters=bool(q_raw.get("order_matters", False)))
     if not q_raw.get("db") or not q_raw.get("sql"):
         raise ConfigError(f"{where}: query.db와 query.sql이 필요합니다")
+    sql = str(q_raw["sql"])
+    try:
+        validate_read_only_sql(sql)
+    except ValueError as err:
+        raise ConfigError(f"{where}.query.sql: {err}") from err
     return QuerySpec(
         db=_expand_env(str(q_raw["db"]), f"{where}.query.db"),
-        sql=str(q_raw["sql"]),
+        sql=sql,
         order_matters=bool(q_raw.get("order_matters", False)),
     )
 

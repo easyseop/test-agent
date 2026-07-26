@@ -17,6 +17,27 @@ HARD_BLOCK_PATTERNS = [
     "logout", "로그아웃",
 ]
 
+_SQL_MASKED_PARTS = re.compile(
+    r"""
+    '(?:''|[^'])*'
+    |"(?:\"\"|[^"])*"
+    |`(?:``|[^`])*`
+    |\[(?:\]\]|[^\]])*\]
+    |--[^\r\n]*
+    |/\*.*?\*/
+    """,
+    re.DOTALL | re.VERBOSE,
+)
+_SQL_TOKEN = re.compile(r"[A-Za-z_]+")
+_READ_ONLY_SQL_STARTS = {"SELECT", "WITH"}
+_FORBIDDEN_SQL_TOKENS = {
+    "ALTER", "ANALYZE", "ATTACH", "BEGIN", "CALL", "COMMENT", "COMMIT",
+    "COPY", "CREATE", "DELETE", "DETACH", "DO", "DROP", "EXEC", "EXECUTE",
+    "GRANT", "IMPORT", "INSERT", "INSTALL", "LOAD", "LOCK", "MERGE",
+    "PRAGMA", "REINDEX", "RELEASE", "RENAME", "REPLACE", "REVOKE",
+    "ROLLBACK", "SAVEPOINT", "SET", "TRUNCATE", "UPDATE", "UPSERT", "VACUUM",
+}
+
 
 def merge_avoid_patterns(configured: Iterable[str]) -> list[str]:
     """사용자 패턴에 제거 불가능한 최소 차단 목록을 합친다."""
@@ -31,3 +52,28 @@ def find_hard_block(*values: object) -> str | None:
          if re.search(re.escape(pattern), haystack, re.IGNORECASE)),
         None,
     )
+
+
+def validate_read_only_sql(sql: str) -> str:
+    """정답원 SQL이 보수적인 단일 SELECT/WITH 조회인지 검증한다.
+
+    문자열·인용 식별자·주석 안의 단어와 세미콜론은 판정에서 제외한다.
+    SQL 파서가 아닌 안전 가드이므로 모호한 문장은 허용하지 않는다.
+    """
+    if not isinstance(sql, str) or not sql.strip():
+        raise ValueError("조회 SQL이 비어 있습니다")
+
+    code = _SQL_MASKED_PARTS.sub(" ", sql)
+    statements = [part.strip() for part in code.split(";") if part.strip()]
+    if len(statements) != 1:
+        raise ValueError("조회 SQL은 단일 문장만 허용됩니다")
+
+    tokens = [token.upper() for token in _SQL_TOKEN.findall(statements[0])]
+    if not tokens or tokens[0] not in _READ_ONLY_SQL_STARTS:
+        raise ValueError("조회 SQL은 SELECT 또는 WITH로 시작해야 합니다")
+
+    forbidden = next((token for token in tokens if token in _FORBIDDEN_SQL_TOKENS), None)
+    if forbidden:
+        raise ValueError(f"조회 SQL에 쓰기·관리 키워드 {forbidden}를 사용할 수 없습니다")
+
+    return sql

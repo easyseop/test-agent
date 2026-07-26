@@ -10,6 +10,7 @@ from decimal import Decimal
 
 from .config import ApiSpec
 from .models import DataCheckResult
+from .safety import validate_read_only_sql
 
 _NUM_STRIP = re.compile(r"[,\s₩원$]")
 _WS = re.compile(r"\s+")
@@ -40,6 +41,8 @@ def run_query(db_url: str, sql: str) -> tuple[list[str], list[tuple]]:
     - sqlite:///<경로> : 내장 sqlite3, 읽기 전용(read-only) 접속
     - 그 외 SQLAlchemy URL (postgresql://…, mysql+pymysql://… 등) : sqlalchemy 필요
     """
+    validate_read_only_sql(sql)
+
     if db_url.startswith("sqlite:///"):
         path = db_url[len("sqlite:///"):]
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
