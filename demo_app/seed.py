@@ -43,6 +43,8 @@ def main() -> None:
     # 날짜 경계 검증 보장용 고정 행 (BUG-3 탐지에 필요)
     rows.append((1201, "경계일테스트", "shipped", "식품", 99000, "2026-06-30"))
     rows.append((1202, "경계일테스트", "delivered", "의류", 88000, "2026-06-01"))
+    # JavaScript 안전 정수(2^53-1)를 넘는 주문번호의 UI↔API↔DB 손실 방지 검증
+    rows.append((9007199254740993, "큰정수ID", "shipped", "전자기기", 77000, "2026-05-15"))
 
     conn.executemany("INSERT INTO orders VALUES (?, ?, ?, ?, ?, ?)", rows)
     conn.commit()

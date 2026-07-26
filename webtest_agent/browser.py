@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from glob import glob
 from pathlib import Path
 
@@ -100,6 +101,8 @@ class BrowserSession:
         self.browser: Browser | None = None
         # 인증 후 세팅되면 이후 모든 컨텍스트가 로그인 세션을 재사용한다
         self.storage_state: Path | None = None
+        self._storage_state_cleanup_path: Path | None = None
+        self.preserve_storage_state = False
 
     def __enter__(self) -> "BrowserSession":
         self.start()
@@ -123,8 +126,37 @@ class BrowserSession:
             if self.browser:
                 self.browser.close()
         finally:
-            if self._pw:
-                self._pw.stop()
+            try:
+                if self._pw:
+                    self._pw.stop()
+            finally:
+                self._cleanup_storage_state()
+
+    def configure_storage_state(self, path: Path, preserve: bool = False) -> None:
+        """인증 상태 파일의 생성 준비와 종료 후 보관 여부를 설정한다."""
+        self._storage_state_cleanup_path = path
+        self.storage_state = None
+        self.preserve_storage_state = preserve
+
+    def activate_storage_state(self) -> None:
+        """로그인 성공 후 준비된 인증 상태를 새 브라우저 컨텍스트에 적용한다."""
+        self.storage_state = self._storage_state_cleanup_path
+
+    def _cleanup_storage_state(self) -> None:
+        """기본 정책에 따라 브라우저 종료 후 인증 상태 파일을 삭제한다."""
+        path = self._storage_state_cleanup_path
+        self.storage_state = None
+        self._storage_state_cleanup_path = None
+        if path is None or self.preserve_storage_state:
+            return
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as err:
+            warnings.warn(
+                f"인증 상태 파일을 삭제하지 못했습니다: {path} ({err})",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     @property
     def version(self) -> str:

@@ -1,0 +1,27 @@
+# 첫 페이지 로드 중 콘솔 오류가 시나리오 실패로 잡히는지 확인하는 전용 설정
+target:
+  base_url: http://127.0.0.1:5057
+  settle_ms: 100
+  nav_timeout_ms: 10000
+  scenario_timeout_ms: 10000
+  app_version: demo-load-error
+
+crawl:
+  enabled: false
+
+button_sweep:
+  enabled: false
+
+spec_checks:
+  - name: 초기로드-콘솔오류
+    description: page.goto 중 발생한 콘솔 오류도 시나리오 실패로 판정해야 한다
+    page: /load-error
+    steps:
+      - {action: assert_visible, selector: "#ready"}
+
+report:
+  title: 초기 페이지 로드 오류 검출 데모
+  video: false
+  trace: false
+
+output_dir: runs

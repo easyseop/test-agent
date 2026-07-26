@@ -11,7 +11,7 @@
 | D2 | 정답 쿼리 정의 | YAML에 직접 작성 (사람 또는 IDE의 LLM이 작성 → diff 리뷰·커밋이 승인 게이트) |
 | D3 | LLM 관여 방식 | **런타임 API 호출 없음.** LLM은 작성 시점에 IDE(Claude Code)에서 관여 — 테스트 케이스(YAML) 작성·실패 분석·시나리오 유지보수. 실행 엔진은 100% 결정적 |
 | D4 | v1 구현 범위 | **엔진 전체**(크롤러·스윕·UI↔DB 대조·증적·리포트) + 데모앱 + LLM 워크플로 스캐폴드(`CLAUDE.md` 스키마, `/generate-tests`·`/analyze-report` 커맨드). **`knowledge/` 위키 콘텐츠는 사용자가 직접 구축**(§8은 그 가이드) |
-| D5 | 인증 | ✅ v3 슬라이스로 구현 — `auth.steps`(스텝 DSL)로 로그인 1회 수행 → storage_state 저장 → 전 시나리오·크롤링이 세션 재사용. 비밀번호는 `${환경변수}` 치환(평문 금지). 실패 시 실행 중단(종료코드 2) |
+| D5 | 인증 | ✅ 구현 — `auth.steps`로 로그인 1회 수행 → storage_state를 전 시나리오·크롤링이 재사용. 상태 파일은 소유자 전용(0600)으로 생성하고 기본 자동 삭제, `--preserve-auth-state`일 때만 명시적 보관. 비밀번호는 `${환경변수}` 치환 |
 | D6 | 리포트 전달 | 파일 산출 (HTML 단일파일 + MD + JSON + walkthrough + webm + trace) |
 | D7 | flaky 정책 | 기본 **재시도 없음**. 명시적 대기(`wait_for`)와 안정화 대기로 예방. v2: `target.flaky_recheck: true` 설정 시 실패 시나리오를 1회 재실행해 통과하면 '간헐(flaky) 의심' **경고**로 표시(최초 실패 증적 유지) — 기본 꺼짐 |
 
@@ -149,6 +149,8 @@ output_dir: runs
 `query.sql`의 SELECT 컬럼 ↔ `ui_table.columns` **순서 1:1 대응** (개수 불일치 = 설정 오류로 실패).
 `query.db`는 `sqlite:///`(내장, read-only) 외에 SQLAlchemy URL(`postgresql://…`, `mysql+pymysql://…`)도 지원 — sqlalchemy+드라이버 설치 필요. 접속 문자열의 비밀번호는 `${환경변수}`로.
 `mask_selectors`는 **스크린샷에만** 적용된다(비디오·트레이스는 미적용 — 공유 범위 주의).
+인증 상태 파일은 실행 종료 시 기본 삭제된다. 디버깅을 위한 명시적 보관은
+`--preserve-auth-state`를 사용하며, 보관 파일은 Git·리포트·공유 폴더에서 제외한다.
 
 ## 4. 스텝 DSL
 
@@ -168,6 +170,20 @@ output_dir: runs
 | 다이얼로그 출현(기본 '취소' 응답) | 정보 |
 
 시나리오 판정 = 최악값(실패>경고>통과). 종료 코드: 실패≥1 → `1` (CI 게이트).
+
+### 실행 자체의 상태 계약
+
+시나리오 결과와 별도로 실행 전체에 다음 상태를 기록한다.
+
+| `report.json`의 `meta.status` | 종료 코드 | 의미 |
+|---|---:|---|
+| `passed` | 0 | 하나 이상의 유효한 시나리오를 실행했고 실패 없음 |
+| `failed` | 1 | 하나 이상의 유효한 시나리오를 실행했고 실패 있음 |
+| `infra_error` | 2 | 대상 접속, 인증, 크롤링 또는 테스트 정의 문제로 유효한 판정 불가 |
+
+대상에 접속할 수 없거나, 크롤링 페이지가 0개이거나, 최종 시나리오가 0개이면
+`infra_error`다. 이때 통과 0·실패 0이라는 숫자만으로 통과로 해석하지 않으며,
+HTML·Markdown·JSON 리포트에 실행 불가 사유를 남긴다.
 
 ## 6. 데이터 정합성 비교 규칙
 
@@ -221,6 +237,11 @@ runs/<타임스탬프>/
 
 - **사전 준비**: 데이터 검증은 DB 상태를 아는 것이 전제 — 실행 전 시드 스크립트 재실행 또는 read-only 검증만. 운영 DB는 read-only 계정.
 - **민감정보**: 실제 앱의 증적에 개인정보가 담길 수 있음 — 스크린샷은 `report.mask_selectors`로 마스킹(v3 구현), 비디오·트레이스는 마스킹 미적용이므로 공유 범위 주의.
+- **인증 상태**: `auth_state.json`은 0600 권한으로 생성하고 기본 자동 삭제. 명시적으로 보관한 파일은 로그인 세션과 동일한 민감정보로 취급.
+- **쓰기 경계**: 자동 스윕의 저장·삭제·결제·발송·초대·배포·로그아웃 최소 차단 목록은 설정에서 제거 불가. `write_checks`는 `--allow-write-checks` 승인 후에만 실행하며 Runner도 동일 정책을 재검사.
+- **큰 정수**: UI·API·DB 셀은 binary float로 바꾸지 않고 문자열로 정규화. JSON 소수도 `Decimal`로 읽어 유효 자릿수를 보존.
+- **초기 로드 신호**: 시나리오 첫 `page.goto` 중 콘솔·페이지·HTTP 오류도 판정에 포함. 정상으로 합의된 리소스 실패만 `target.ignore_http_error_patterns` 정규식으로 제외.
+- **전체 deadline**: `target.run_timeout_ms` 기본 30분. 브라우저 시작·인증·접속·크롤링·시나리오 전체에 적용하고, 초과한 부분 실행은 `infra_error`와 종료코드 2로 처리.
 - **flaky**: 재시도 없음(D7). 간헐 실패는 대기 스텝 보강으로 해결.
 
 ## 12. 테스트 전략
@@ -233,4 +254,9 @@ runs/<타임스탬프>/
 **v3 1차 완료(2026-07-23)**: 로그인 인증(auth.steps + storage_state 재사용), 스크린샷 마스킹(mask_selectors), SQLAlchemy 경유 DB 확장(PostgreSQL/MySQL), `${환경변수}` 치환.
 **v3 2차 완료(2026-07-23)**: REST API 오라클(`query.api` — 오픈메타데이터류 대비), 페이지네이션 순회(`ui_table.pagination`), 쓰기 검증(⑤, `write_checks`), 접근성 기본 점검(간이·정보성, `a11y.enabled`).
 **v3 3차 완료(2026-07-23)**: 시각 회귀(⑥, `visual_checks` + `--update-baselines` 승인 플로 — pillow 픽셀 diff·마젠타 diff 이미지), 웹훅 알림(`notify` — Slack Incoming Webhook 호환).
+**v3 4차 완료(2026-07-27)**: 인증 상태 파일 0600 권한, 정상·실패 종료 기본 자동 삭제, `--preserve-auth-state` 명시적 보관, Git 제외와 회귀 테스트.
+**v3 5차 완료(2026-07-27)**: 자동 스윕 최소 쓰기 차단 목록(설정+Runner 이중 경계), 차단 이유 리포트, `write_checks` 기본 차단과 `--allow-write-checks` 명시적 승인.
+**v3 6차 완료(2026-07-27)**: float 없는 숫자 문자열 정규화, JSON 소수 정밀도 보존, 2^53 초과 주문번호 UI·API·DB E2E.
+**v3 7차 완료(2026-07-27)**: 첫 page.goto 오류 판정, HTTP 오류 URL 허용 목록과 정규식 검증, 초기 콘솔 오류 Chromium 검출 데모.
+**v3 8차 완료(2026-07-27)**: 기본 30분 전체 deadline, 크롤링·Runner 제한 연동, 부분 실행의 infra_error·종료코드 2와 전용 E2E.
 **잔여 백로그**: axe 기반 정식 a11y(의존성 결정 필요), 병렬 실행, 크로스 브라우저(firefox/webkit 설치 필요). — 이로써 검증 방법 ①~⑥이 모두 엔진에 구현됨 (⑦은 설계상 참고용).

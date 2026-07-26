@@ -33,6 +33,54 @@ def test_load_demo_config():
     assert cfg.a11y.enabled is True
 
 
+def test_hard_sweep_blocks_cannot_be_removed_by_yaml(tmp_path):
+    p = tmp_path / "safe.yaml"
+    p.write_text(
+        """
+target: {base_url: http://x}
+button_sweep:
+  avoid_patterns: [custom-danger]
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(p)
+
+    assert "custom-danger" in cfg.sweep.avoid_patterns
+    assert "삭제" in cfg.sweep.avoid_patterns
+    assert "save" in cfg.sweep.avoid_patterns
+
+
+def test_invalid_ignored_http_error_regex_is_rejected(tmp_path):
+    p = tmp_path / "bad-regex.yaml"
+    p.write_text(
+        """
+target:
+  base_url: http://x
+  ignore_http_error_patterns: ["["]
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="잘못된 정규식"):
+        load_config(p)
+
+
+def test_run_timeout_must_be_positive(tmp_path):
+    p = tmp_path / "bad-timeout.yaml"
+    p.write_text(
+        """
+target:
+  base_url: http://x
+  run_timeout_ms: 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="run_timeout_ms"):
+        load_config(p)
+
+
 def test_query_db_and_api_mutually_exclusive(tmp_path):
     p = tmp_path / "bad.yaml"
     p.write_text(

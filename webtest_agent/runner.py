@@ -1,6 +1,7 @@
 """시나리오 실행(Execute)과 판정(Verify)."""
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import time
@@ -13,10 +14,15 @@ from .datacheck import (compare, extract_table, parse_count, run_api_query,
 from .models import (FAIL, PASS, WARN, DataCheckResult, ScenarioResult,
                      StepResult, VisualResult, WriteCheckResult)
 from .scenarios import Scenario, slugify
+from .safety import find_hard_block
 from .visual import compare_images
 
 
 class ScenarioTimeout(Exception):
+    pass
+
+
+class RunDeadlineExceeded(ScenarioTimeout):
     pass
 
 
@@ -51,11 +57,14 @@ def _dom_size(page) -> int:
 
 class Runner:
     def __init__(self, session: BrowserSession, cfg: AgentConfig, run_dir: Path,
-                 update_baselines: bool = False) -> None:
+                 update_baselines: bool = False, allow_write_checks: bool = False,
+                 deadline_monotonic: float | None = None) -> None:
         self.session = session
         self.cfg = cfg
         self.run_dir = run_dir
         self.update_baselines = update_baselines
+        self.allow_write_checks = allow_write_checks
+        self.deadline_monotonic = deadline_monotonic
         (run_dir / "videos").mkdir(parents=True, exist_ok=True)
         (run_dir / "traces").mkdir(parents=True, exist_ok=True)
 
@@ -68,15 +77,45 @@ class Runner:
         return save_screenshot(page, path, full_page=full_page,
                                mask_selectors=self.cfg.report.mask_selectors)
 
+    def _http_failures(self, failures):
+        """명시적으로 허용한 URL 패턴만 제외하고 HTTP 실패를 복사한다."""
+        patterns = [
+            re.compile(pattern)
+            for pattern in self.cfg.target.ignore_http_error_patterns
+        ]
+        return [
+            failure for failure in failures
+            if not any(pattern.search(failure.url) for pattern in patterns)
+        ]
+
+    def _bounded_timeout(self, requested_ms: int) -> int:
+        if self.deadline_monotonic is None:
+            return requested_ms
+        remaining = int((self.deadline_monotonic - time.monotonic()) * 1000)
+        if remaining <= 0:
+            raise RunDeadlineExceeded
+        return max(1, min(requested_ms, remaining))
+
+    def _wait(self, page, requested_ms: int) -> None:
+        bounded = self._bounded_timeout(requested_ms)
+        page.wait_for_timeout(bounded)
+        if bounded < requested_ms:
+            raise RunDeadlineExceeded
+
     def authenticate(self, steps, state_path: Path) -> None:
         """로그인 스텝을 1회 수행하고 세션(storage_state)을 저장한다."""
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(state_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.close(fd)
         ctx, page, _monitor = self.session.new_context(self.cfg.target.base_url)
         try:
             page.set_default_timeout(5000)
             for step in steps:
+                page.set_default_timeout(self._bounded_timeout(5000))
                 self._exec_step(page, step)
-                page.wait_for_timeout(self.cfg.target.settle_ms)
+                self._wait(page, self.cfg.target.settle_ms)
             ctx.storage_state(path=str(state_path))
+            os.chmod(state_path, 0o600)
         finally:
             ctx.close()
 
@@ -85,31 +124,50 @@ class Runner:
             name=scenario.name, kind=scenario.kind,
             page=scenario.page, description=scenario.description,
         )
+        started = time.monotonic()
+
+        # CLI 계획 단계를 우회해 Runner를 직접 호출해도 쓰기 경계를 넘지 못한다.
+        if scenario.kind == "write_check" and not self.allow_write_checks:
+            res.reasons.append(
+                "안전 차단: write_checks는 --allow-write-checks 승인 없이 실행할 수 없습니다"
+            )
+            res.duration_ms = int((time.monotonic() - started) * 1000)
+            self._verdict(res, scenario, hard_fail=True)
+            return res
+
+        if scenario.kind.startswith("sweep"):
+            selector = scenario.steps[0].selector if scenario.steps else ""
+            hit = find_hard_block(scenario.element_text, selector)
+            if hit:
+                res.reasons.append(
+                    f"안전 차단: 자동 탐색은 쓰기·외부 전송·세션 변경 동작을 "
+                    f"클릭하지 않습니다 ({hit})"
+                )
+                res.duration_ms = int((time.monotonic() - started) * 1000)
+                self._verdict(res, scenario, hard_fail=True)
+                return res
+
         slug = f"{index:02d}_{slugify(scenario.name)}" + (f"_{suffix}" if suffix else "")
         shots_dir = self.run_dir / "screenshots" / slug
         video_tmp = (self.run_dir / "videos" / f"_tmp_{slug}") if self.cfg.report.video else None
-        started = time.monotonic()
         ctx = page = video = None
         hard_fail = False
 
         try:
             ctx, page, monitor = self.session.new_context(
                 self.cfg.target.base_url, video_dir=video_tmp, trace=self.cfg.report.trace)
-            page.set_default_timeout(5000)
+            page.set_default_timeout(self._bounded_timeout(5000))
 
             page.goto(scenario.page or "/", wait_until="load",
-                      timeout=self.cfg.target.nav_timeout_ms)
-            page.wait_for_timeout(self.cfg.target.settle_ms)
+                      timeout=self._bounded_timeout(self.cfg.target.nav_timeout_ms))
+            self._wait(page, self.cfg.target.settle_ms)
             res.steps.append(StepResult(
                 index=0, action="goto",
                 description=f"{scenario.page or '/'} 페이지에 접속한다",
                 screenshot=self._rel(self._shot(page, shots_dir / "step00.jpg")),
             ))
 
-            # 초기 로드에서 발생한 신호는 액션 판정과 분리한다
-            base_console = len(monitor.console_errors)
-            base_pageerr = len(monitor.page_errors)
-            base_http = len(monitor.http_failures)
+            # 초기 page.goto 중 발생한 오류도 시나리오 판정에 포함한다.
             base_dialog = len(monitor.dialogs)
             base_down = len(monitor.downloads)
             base_popup = len(monitor.popups)
@@ -126,13 +184,16 @@ class Runner:
             for i, step in enumerate(scenario.steps, start=1):
                 if (time.monotonic() - started) * 1000 > self.cfg.target.scenario_timeout_ms:
                     raise ScenarioTimeout
+                page.set_default_timeout(self._bounded_timeout(5000))
                 sr = StepResult(index=i, action=step.action, selector=step.selector,
                                 value=step.value, description=describe_step(step))
                 t0 = time.monotonic()
                 try:
                     self._exec_step(page, step)
-                    page.wait_for_timeout(self.cfg.target.settle_ms)
+                    self._wait(page, self.cfg.target.settle_ms)
                     sr.screenshot = self._rel(self._shot(page, shots_dir / f"step{i:02d}.jpg"))
+                except RunDeadlineExceeded:
+                    raise
                 except Exception as err:
                     sr.status = "fail"
                     sr.error = _short(err)
@@ -144,9 +205,9 @@ class Runner:
                 sr.duration_ms = int((time.monotonic() - t0) * 1000)
                 res.steps.append(sr)
 
-            res.console_errors = monitor.console_errors[base_console:]
-            res.page_errors = monitor.page_errors[base_pageerr:]
-            res.http_failures = monitor.http_failures[base_http:]
+            res.console_errors = list(monitor.console_errors)
+            res.page_errors = list(monitor.page_errors)
+            res.http_failures = self._http_failures(monitor.http_failures)
             res.dialogs = monitor.dialogs[base_dialog:]
             res.downloads = monitor.downloads[base_down:]
 
@@ -188,6 +249,11 @@ class Runner:
                         pre=write_pre, expected_delta=spec.expect_delta,
                         note=f"사후 측정 실패: {_short(err)}")
 
+        except RunDeadlineExceeded:
+            hard_fail = True
+            res.reasons.append(
+                f"전체 실행 제한 시간 초과 ({self.cfg.target.run_timeout_ms}ms)"
+            )
         except ScenarioTimeout:
             hard_fail = True
             res.reasons.append(f"시나리오 타임아웃 초과 ({self.cfg.target.scenario_timeout_ms}ms)")
@@ -227,11 +293,16 @@ class Runner:
         action = step.action
         locator = page.locator(step.selector).first if step.selector else None
         if action == "goto":
-            page.goto(step.value, wait_until="load", timeout=self.cfg.target.nav_timeout_ms)
+            page.goto(
+                step.value,
+                wait_until="load",
+                timeout=self._bounded_timeout(self.cfg.target.nav_timeout_ms),
+            )
         elif action == "click":
             locator.click()
+            load_timeout = self._bounded_timeout(3000)
             try:
-                page.wait_for_load_state("load", timeout=3000)
+                page.wait_for_load_state("load", timeout=load_timeout)
             except Exception:
                 pass
         elif action == "fill":
@@ -243,12 +314,17 @@ class Runner:
         elif action == "press":
             locator.press(step.value)
         elif action == "wait_for":
-            page.wait_for_selector(step.selector, state="visible", timeout=10000)
+            page.wait_for_selector(
+                step.selector,
+                state="visible",
+                timeout=self._bounded_timeout(10000),
+            )
         elif action == "wait_ms":
-            page.wait_for_timeout(int(step.value))
+            self._wait(page, int(step.value))
         elif action == "assert_visible":
+            timeout = self._bounded_timeout(3000)
             try:
-                page.wait_for_selector(step.selector, state="visible", timeout=3000)
+                page.wait_for_selector(step.selector, state="visible", timeout=timeout)
             except Exception:
                 raise AssertionError(f"요소 '{step.selector}'가 화면에 보이지 않습니다")
         elif action == "assert_text":

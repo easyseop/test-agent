@@ -1,4 +1,6 @@
 """리포트 생성 유닛 테스트."""
+import json
+
 from webtest_agent.models import (DataCheckResult, HttpFailure, RunMeta,
                                   ScenarioResult, StepResult)
 from webtest_agent.report import write_reports
@@ -52,3 +54,26 @@ def test_write_reports(tmp_path):
     assert "UI↔DB 불일치" in md and "신규 실패" in md
     walkthrough = (tmp_path / "walkthrough.md").read_text(encoding="utf-8")
     assert "페이지에 접속한다" in walkthrough
+
+
+def test_infrastructure_error_is_visible_in_all_reports(tmp_path):
+    meta = RunMeta(
+        title="실행 불가 리포트",
+        base_url="http://127.0.0.1:59999",
+        app_version="",
+        config_path="configs/offline.yaml",
+        started_at="2026-07-25 10:00:00",
+        finished_at="2026-07-25 10:00:01",
+        status="infra_error",
+        error="대상 앱에 접속할 수 없습니다",
+    )
+
+    write_reports(tmp_path, meta, [], [], [])
+
+    payload = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert payload["meta"]["status"] == "infra_error"
+    assert "접속할 수 없습니다" in payload["meta"]["error"]
+    assert "실행 불가" in (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "테스트를 실행하지 못했습니다" in (
+        tmp_path / "report.html"
+    ).read_text(encoding="utf-8")

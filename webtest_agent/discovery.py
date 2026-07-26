@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -106,7 +107,12 @@ def _same_origin_path(href: str, current_url: str, origin: str) -> str | None:
     return path
 
 
-def crawl(session: BrowserSession, cfg: AgentConfig, run_dir: Path) -> Discovery:
+def crawl(
+    session: BrowserSession,
+    cfg: AgentConfig,
+    run_dir: Path,
+    deadline_monotonic: float | None = None,
+) -> Discovery:
     """base_url에서 시작해 동일 출처 링크를 BFS로 순회하며 인벤토리를 만든다."""
     base = cfg.target.base_url
     parsed_base = urlparse(base)
@@ -119,16 +125,30 @@ def crawl(session: BrowserSession, cfg: AgentConfig, run_dir: Path) -> Discovery
         queue: list[tuple[str, int]] = [("/", 0)]
         seen: set[str] = set()
         while queue and len(discovery.pages) < cfg.crawl.max_pages:
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                break
             path, depth = queue.pop(0)
             norm = path.split("#")[0] or "/"
             if norm in seen or any(rx.search(norm) for rx in excludes):
                 continue
             seen.add(norm)
             try:
-                page.goto(norm, wait_until="load", timeout=cfg.target.nav_timeout_ms)
+                nav_timeout = cfg.target.nav_timeout_ms
+                if deadline_monotonic is not None:
+                    remaining = int((deadline_monotonic - time.monotonic()) * 1000)
+                    if remaining <= 0:
+                        break
+                    nav_timeout = min(nav_timeout, remaining)
+                page.goto(norm, wait_until="load", timeout=max(1, nav_timeout))
             except Exception:
                 continue
-            page.wait_for_timeout(cfg.target.settle_ms)
+            settle_ms = cfg.target.settle_ms
+            if deadline_monotonic is not None:
+                remaining = int((deadline_monotonic - time.monotonic()) * 1000)
+                if remaining <= 0:
+                    break
+                settle_ms = min(settle_ms, remaining)
+            page.wait_for_timeout(max(0, settle_ms))
             inventory = page.evaluate(JS_INVENTORY)
             a11y_issues = page.evaluate(JS_A11Y) if cfg.a11y.enabled else []
             shot_rel = f"screenshots/discovery_{len(discovery.pages):02d}.jpg"

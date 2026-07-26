@@ -8,6 +8,8 @@ from pathlib import Path
 
 import yaml
 
+from .safety import HARD_BLOCK_PATTERNS, merge_avoid_patterns
+
 
 class ConfigError(ValueError):
     """설정 파일 오류."""
@@ -65,8 +67,10 @@ class TargetConfig:
     settle_ms: int = 400
     nav_timeout_ms: int = 10000
     scenario_timeout_ms: int = 60000
+    run_timeout_ms: int = 1800000
     app_version: str = ""
     flaky_recheck: bool = False  # 실패 시 1회 재실행해 간헐(flaky) 여부 표시
+    ignore_http_error_patterns: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -77,7 +81,7 @@ class CrawlConfig:
     exclude_patterns: list[str] = field(default_factory=list)
 
 
-DEFAULT_AVOID = ["삭제", "delete", "remove", "탈퇴", "결제", "pay", "logout", "로그아웃"]
+DEFAULT_AVOID = list(HARD_BLOCK_PATTERNS)
 
 
 @dataclass
@@ -222,6 +226,16 @@ def _sub(data: dict, key: str) -> dict:
     return v
 
 
+def _regex_list(values, where: str) -> list[str]:
+    patterns = [str(value) for value in (values or [])]
+    for index, pattern in enumerate(patterns):
+        try:
+            re.compile(pattern)
+        except re.error as err:
+            raise ConfigError(f"{where}[{index}]: 잘못된 정규식 '{pattern}' ({err})") from err
+    return patterns
+
+
 def _parse_query(q_raw, where: str, allow_api: bool) -> QuerySpec:
     """query 파싱 — (db+sql) 또는 api 중 정확히 하나."""
     if not q_raw:
@@ -268,9 +282,16 @@ def load_config(path: str | Path) -> AgentConfig:
         settle_ms=int(t.get("settle_ms", 400)),
         nav_timeout_ms=int(t.get("nav_timeout_ms", 10000)),
         scenario_timeout_ms=int(t.get("scenario_timeout_ms", 60000)),
+        run_timeout_ms=int(t.get("run_timeout_ms", 1800000)),
         app_version=str(t.get("app_version", "")),
         flaky_recheck=bool(t.get("flaky_recheck", False)),
+        ignore_http_error_patterns=_regex_list(
+            t.get("ignore_http_error_patterns"),
+            "target.ignore_http_error_patterns",
+        ),
     )
+    if target.run_timeout_ms <= 0:
+        raise ConfigError("target.run_timeout_ms는 1ms 이상이어야 합니다")
 
     c = _sub(data, "crawl")
     crawl = CrawlConfig(
@@ -285,7 +306,7 @@ def load_config(path: str | Path) -> AgentConfig:
         enabled=bool(s.get("enabled", True)),
         include_links=bool(s.get("include_links", True)),
         max_per_page=int(s.get("max_per_page", 30)),
-        avoid_patterns=[str(x) for x in s.get("avoid_patterns", DEFAULT_AVOID)],
+        avoid_patterns=merge_avoid_patterns(s.get("avoid_patterns", [])),
     )
 
     checks: list[DataCheckSpec] = []

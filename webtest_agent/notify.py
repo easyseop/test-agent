@@ -6,15 +6,26 @@ import urllib.request
 
 from .models import FAIL, RunMeta, ScenarioResult
 
+_STATUS_LABEL = {
+    "passed": "통과",
+    "failed": "실패",
+    "infra_error": "실행 불가",
+    "running": "실행 중",
+}
+
 
 def build_payload(meta: RunMeta, summary: dict, results: list[ScenarioResult],
                   run_dir: str) -> dict:
     failures = [r for r in results if r.status == FAIL]
+    status_label = _STATUS_LABEL.get(meta.status, meta.status)
     lines = [
-        f"[{meta.title}] 통과 {summary['pass']} · 경고 {summary['warn']}"
+        f"[{meta.title}] 실행 상태: {status_label}",
+        f"시나리오 통과 {summary['pass']} · 경고 {summary['warn']}"
         f" · 실패 {summary['fail']} (총 {summary['total']})",
         f"대상: {meta.base_url} · 산출물: {run_dir}",
     ]
+    if meta.error:
+        lines.append(f"사유: {meta.error}")
     for r in failures[:10]:
         reason = r.reasons[0] if r.reasons else ""
         lines.append(f"✗ {r.name} — {reason[:160]}")
@@ -23,6 +34,8 @@ def build_payload(meta: RunMeta, summary: dict, results: list[ScenarioResult],
         "title": meta.title,
         "base_url": meta.base_url,
         "run_dir": run_dir,
+        "status": meta.status,
+        "error": meta.error,
         "summary": summary,
         "failures": [{"name": r.name, "reasons": r.reasons} for r in failures],
     }

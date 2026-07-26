@@ -138,6 +138,19 @@ def api_orders():
     })
 
 
+@app.route("/load-error")
+def load_error():
+    """Runner가 첫 page.goto 중 콘솔 오류도 잡는지 검증하는 전용 페이지."""
+    return Response(
+        """<!doctype html><html lang="ko"><head><meta charset="utf-8">
+        <title>초기 로드 오류 데모</title></head><body>
+        <main id="ready">화면은 표시되지만 초기 스크립트 오류가 있습니다.</main>
+        <script>console.error("demo initial load error")</script>
+        </body></html>""",
+        mimetype="text/html",
+    )
+
+
 @app.route("/new", methods=["GET", "POST"])
 def new_order():
     error = ""

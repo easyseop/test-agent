@@ -6,6 +6,7 @@ import re
 import sqlite3
 import urllib.request
 from collections import Counter
+from decimal import Decimal
 
 from .config import ApiSpec
 from .models import DataCheckResult
@@ -20,8 +21,16 @@ def normalize_cell(value) -> str:
     s = _WS.sub(" ", str(value).strip())
     candidate = _NUM_STRIP.sub("", s)
     if _NUMERIC.fullmatch(candidate):
-        f = float(candidate)
-        return str(int(f)) if f.is_integer() else repr(f)
+        negative = candidate.startswith("-")
+        unsigned = candidate[1:] if negative else candidate
+        whole, dot, fraction = unsigned.partition(".")
+        whole = whole.lstrip("0") or "0"
+        fraction = fraction.rstrip("0") if dot else ""
+        if whole == "0" and not fraction:
+            return "0"
+        canonical = whole + (f".{fraction}" if fraction else "")
+        # float/Decimal 연산 없이 문자열만 다뤄 자릿수 제한 없이 정확히 보존한다.
+        return f"-{canonical}" if negative else canonical
     return s
 
 
@@ -92,7 +101,8 @@ def run_api_query(api: ApiSpec, base_url: str) -> tuple[list[str], list[tuple]]:
     url = api.url if "://" in api.url else base_url.rstrip("/") + api.url
     req = urllib.request.Request(url, headers=api.headers or {})
     with urllib.request.urlopen(req, timeout=15) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+        # JSON 소수도 binary float로 바꾸지 않아 긴 숫자의 유효 자릿수를 보존한다.
+        data = json.loads(resp.read().decode("utf-8"), parse_float=Decimal)
     return list(api.columns), extract_api_rows(data, api.rows_path, api.columns)
 
 

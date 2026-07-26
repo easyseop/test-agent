@@ -72,6 +72,16 @@ def test_normalize_number_formats():
 def test_normalize_decimal():
     assert normalize_cell("3.50") == "3.5"
     assert normalize_cell("3.5") == normalize_cell("3.50")
+    assert normalize_cell("-0.00") == "0"
+
+
+def test_normalize_large_integer_without_float_rounding():
+    value = 9007199254740993
+    assert normalize_cell(value) == "9007199254740993"
+    assert normalize_cell("9,007,199,254,740,993") == "9007199254740993"
+    assert normalize_cell(value) != normalize_cell(value - 1)
+    hundred_digits = "1234567890" * 10
+    assert normalize_cell(hundred_digits) == hundred_digits
 
 
 def test_normalize_non_numeric():
@@ -93,6 +103,25 @@ DB_COLS = ["id", "customer", "amount"]
 def test_compare_exact_match():
     r = compare(HEADERS, [["1001", "김민준", "12,300"]], None, DB_COLS, [(1001, "김민준", 12300)])
     assert r.matched and r.ui_count == 1 and r.db_count == 1
+
+
+def test_compare_large_integer_id_exactly():
+    exact = compare(
+        HEADERS,
+        [["9007199254740993", "큰정수ID", "77,000"]],
+        None,
+        DB_COLS,
+        [(9007199254740993, "큰정수ID", 77000)],
+    )
+    off_by_one = compare(
+        HEADERS,
+        [["9007199254740992", "큰정수ID", "77,000"]],
+        None,
+        DB_COLS,
+        [(9007199254740993, "큰정수ID", 77000)],
+    )
+    assert exact.matched
+    assert not off_by_one.matched
 
 
 def test_compare_order_insensitive_by_default():

@@ -8,6 +8,7 @@ from .config import (AgentConfig, DataCheckSpec, Step, VisualCheckSpec,
                      WriteCheckSpec)
 from .discovery import Discovery
 from .models import BlockedElement
+from .safety import find_hard_block
 
 _SLUG_RX = re.compile(r"[^0-9A-Za-z가-힣_-]+")
 
@@ -60,9 +61,24 @@ def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario],
             if kind == "link" and str(el.get("href", "")).startswith(("mailto:", "tel:", "javascript:")):
                 continue
 
-            hit = next((pat for pat, rx in avoid if rx.search(text)), None)
+            # 최소 안전 패턴은 텍스트뿐 아니라 selector와 href에도 적용한다.
+            # 설정 로더를 우회해 AgentConfig를 직접 만든 경우에도 제거할 수 없다.
+            hard_hit = find_hard_block(text, selector, el.get("href"))
+            hit = hard_hit or next(
+                (pat for pat, rx in avoid
+                 if rx.search(" ".join((text, selector, str(el.get("href") or ""))))),
+                None,
+            )
             if hit:
-                blocked.append(BlockedElement(page=pinfo.path, text=text, pattern=hit))
+                blocked.append(BlockedElement(
+                    page=pinfo.path,
+                    text=text,
+                    pattern=hit,
+                    reason=(
+                        "자동 탐색에서 쓰기·외부 전송·세션 변경 동작을 실행하지 않음"
+                        if hard_hit else "설정의 avoid_patterns와 일치해 자동 탐색에서 제외"
+                    ),
+                ))
                 continue
 
             label = "버튼" if kind == "button" else "링크"
@@ -132,6 +148,19 @@ def build_write_checks(cfg: AgentConfig) -> list[Scenario]:
             steps=list(spec.steps),
             description=spec.description,
             write_spec=spec,
+        )
+        for spec in cfg.write_checks
+    ]
+
+
+def block_write_checks(cfg: AgentConfig) -> list[BlockedElement]:
+    """명시적 CLI 승인이 없는 write_checks를 보고서용 차단 항목으로 만든다."""
+    return [
+        BlockedElement(
+            page=spec.page,
+            text=spec.name,
+            pattern="--allow-write-checks",
+            reason="쓰기 검증은 명시적 실행 승인 없이는 실행하지 않음",
         )
         for spec in cfg.write_checks
     ]

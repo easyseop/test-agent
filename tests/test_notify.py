@@ -26,15 +26,36 @@ def _meta():
 
 
 def test_build_payload_contains_failures():
+    meta = _meta()
+    meta.status = "failed"
     results = [
         ScenarioResult(name="ok", kind="data_check", page="/", status="pass"),
         ScenarioResult(name="bad", kind="data_check", page="/", status="fail",
                        reasons=["UI↔DB 불일치"]),
     ]
-    payload = build_payload(_meta(), {"total": 2, "pass": 1, "warn": 0, "fail": 1},
+    payload = build_payload(meta, {"total": 2, "pass": 1, "warn": 0, "fail": 1},
                             results, "runs/x")
     assert "실패 1" in payload["text"] and "bad" in payload["text"]
+    assert "실행 상태: 실패" in payload["text"]
+    assert payload["status"] == "failed"
     assert payload["failures"][0]["name"] == "bad"
+
+
+def test_build_payload_distinguishes_infrastructure_error():
+    meta = _meta()
+    meta.status = "infra_error"
+    meta.error = "대상 앱에 접속할 수 없습니다"
+    payload = build_payload(
+        meta,
+        {"total": 0, "pass": 0, "warn": 0, "fail": 0},
+        [],
+        "runs/x",
+    )
+
+    assert "실행 상태: 실행 불가" in payload["text"]
+    assert "접속할 수 없습니다" in payload["text"]
+    assert payload["status"] == "infra_error"
+    assert payload["error"] == meta.error
 
 
 def test_send_webhook_roundtrip():

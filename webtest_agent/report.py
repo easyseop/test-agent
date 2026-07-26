@@ -22,6 +22,12 @@ _DIFF_LABEL = {"new_failures": "🔴 신규 실패", "fixed": "🟢 복구됨", 
                "added": "새 시나리오", "removed": "사라진 시나리오"}
 
 _MAX_EMBED_BYTES = 900_000
+_RUN_STATUS_LABEL = {
+    "running": "실행 중",
+    "passed": "완료 — 통과",
+    "failed": "완료 — 실패 있음",
+    "infra_error": "실행 불가",
+}
 
 
 def summarize(results: list[ScenarioResult]) -> dict:
@@ -82,13 +88,17 @@ def _diff_lines(diff: dict | None) -> list[str]:
 
 def _meta_lines(meta: RunMeta, summary: dict) -> list[str]:
     version = f" ({meta.app_version})" if meta.app_version else ""
-    return [
+    lines = [
         f"- 대상: {meta.base_url}{version}",
+        f"- 실행 상태: **{_RUN_STATUS_LABEL.get(meta.status, meta.status)}**",
         f"- 실행: {meta.started_at} ~ {meta.finished_at} ({meta.duration_ms / 1000:.1f}s)",
         f"- 환경: Chromium {meta.browser_version} · Playwright {meta.playwright_version}"
         f" · Python {meta.python_version} · agent {meta.agent_version}",
         f"- 결과: **통과 {summary['pass']} · 경고 {summary['warn']} · 실패 {summary['fail']}** (총 {summary['total']})",
     ]
+    if meta.error:
+        lines.append(f"- 실행 불가 사유: **{meta.error}**")
+    return lines
 
 
 def _write_markdown(path, meta, summary, results, blocked, diff=None) -> None:
@@ -121,8 +131,12 @@ def _write_markdown(path, meta, summary, results, blocked, diff=None) -> None:
                     lines += ["| " + " | ".join(row) + " |" for row in dc.unexpected_in_ui]
 
     if blocked:
-        lines += ["", "## 버튼 스윕 차단 목록 (안전장치)"]
-        lines += [f"- `{b.page}` — '{b.text}' (차단 패턴: `{b.pattern}`)" for b in blocked]
+        lines += ["", "## 안전 차단 목록"]
+        lines += [
+            f"- `{b.page}` — '{b.text}' — {b.reason or '차단 패턴과 일치'} "
+            f"(`{b.pattern}`)"
+            for b in blocked
+        ]
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -348,17 +362,28 @@ def _write_html(path, run_dir, meta, summary, results, blocked, diff=None, disco
     version = f" ({_esc(meta.app_version)})" if meta.app_version else ""
     rows = "".join([
         f"<tr><td>대상</td><td>{_esc(meta.base_url)}{version}</td></tr>",
+        f"<tr><td>실행 상태</td><td>{_esc(_RUN_STATUS_LABEL.get(meta.status, meta.status))}</td></tr>",
         f"<tr><td>실행</td><td>{_esc(meta.started_at)} ~ {_esc(meta.finished_at)}"
         f" ({meta.duration_ms / 1000:.1f}s)</td></tr>",
         f"<tr><td>환경</td><td>Chromium {_esc(meta.browser_version)} · Playwright "
         f"{_esc(meta.playwright_version)} · Python {_esc(meta.python_version)}"
         f" · agent {_esc(meta.agent_version)}</td></tr>",
     ])
+    infra_html = (
+        f"<div class='card' style='border-left:5px solid #dc2626'>"
+        f"<b>테스트를 실행하지 못했습니다.</b><p style='margin-bottom:0'>"
+        f"{_esc(meta.error)}</p></div>"
+        if meta.error else ""
+    )
     blocked_html = ""
     if blocked:
-        items = "".join(f"<li><code>{_esc(b.page)}</code> — '{_esc(b.text)}'"
-                        f" (차단 패턴: <code>{_esc(b.pattern)}</code>)</li>" for b in blocked)
-        blocked_html = (f"<h2>버튼 스윕 차단 목록 (안전장치)</h2><div class='card'>"
+        items = "".join(
+            f"<li><code>{_esc(b.page)}</code> — '{_esc(b.text)}' — "
+            f"{_esc(b.reason or '차단 패턴과 일치')} "
+            f"(<code>{_esc(b.pattern)}</code>)</li>"
+            for b in blocked
+        )
+        blocked_html = (f"<h2>안전 차단 목록</h2><div class='card'>"
                         f"<ul class='info' style='font-size:13.5px'>{items}</ul></div>")
 
     cards = "".join(_scenario_card(run_dir, i, r) for i, r in enumerate(results, 1))
@@ -375,6 +400,7 @@ def _write_html(path, run_dir, meta, summary, results, blocked, diff=None, disco
   <span class="badge" style="background:{BADGE[FAIL][1]}">실패 <b>{summary['fail']}</b></span>
   &nbsp;<span style="color:#6b7280">/ 총 {summary['total']}개 시나리오</span>
 </p>
+{infra_html}
 {_diff_html(diff)}
 {blocked_html}
 {_a11y_html(discovery_pages)}

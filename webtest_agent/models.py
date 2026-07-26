@@ -97,6 +97,7 @@ class BlockedElement:
     page: str
     text: str
     pattern: str
+    reason: str = ""
 
 
 @dataclass
@@ -112,3 +113,5 @@ class RunMeta:
     playwright_version: str = ""
     python_version: str = ""
     agent_version: str = ""
+    status: str = "running"       # running | passed | failed | infra_error
+    error: str = ""               # 실행 불가 사유 (infra_error일 때)
