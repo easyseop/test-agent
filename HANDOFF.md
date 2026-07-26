@@ -6,6 +6,7 @@
 > 작업 시작 기준 커밋: `75a985cce8639430f82abbf1aa3fb7dcfb812684`
 
 - 안전 구현 커밋: `f16fe28` (`Harden Runner execution safety`)
+- SQL 조회 전용 경계 커밋: `50377f8` (`Enforce read-only oracle SQL`)
 - GitHub 상태: 원격보다 로컬 커밋이 앞서며, 아직 push하지 않음
 
 ## 1. 프로젝트 역할
