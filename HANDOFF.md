@@ -5,6 +5,9 @@
 > 기준 브랜치: `claude/web-app-test-agent-yyc2eq`  
 > 작업 시작 기준 커밋: `75a985cce8639430f82abbf1aa3fb7dcfb812684`
 
+- 안전 구현 커밋: `f16fe28` (`Harden Runner execution safety`)
+- GitHub 상태: 로컬에서 1커밋 앞섬, 아직 push하지 않음
+
 ## 1. 프로젝트 역할
 
 `test-agent`는 웹사이트의 테스트를 실제로 실행하는 Python·Playwright Runner다.
