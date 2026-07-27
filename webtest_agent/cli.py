@@ -90,6 +90,107 @@ def _check_target_available(
         ctx.close()
 
 
+def split_scenarios(scenarios):
+    """(병렬 가능=읽기 전용, 직렬 전용=쓰기) 인덱스 쌍 목록으로 나눈다.
+
+    쓰기 검증은 상태를 바꾸므로 병렬에서 제외하고 항상 직렬·최후에 실행한다.
+    인덱스는 1부터이며 리포트 순서 복원에 쓰인다.
+    """
+    indexed = list(enumerate(scenarios, 1))
+    parallel = [(i, sc) for i, sc in indexed if sc.kind != "write_check"]
+    serial = [(i, sc) for i, sc in indexed if sc.kind == "write_check"]
+    return parallel, serial
+
+
+def order_results(collected: dict):
+    """완료 순서와 무관하게 입력(인덱스) 순서로 정렬 — 결정적 리포트."""
+    return [collected[i] for i in sorted(collected)]
+
+
+def _run_parallel(parallel, collected, cfg, run_dir, args, deadline, workers,
+                  auth_state=None) -> str:
+    """읽기 전용 시나리오를 워커별 독립 브라우저로 병렬 실행.
+
+    스레드마다 자기 BrowserSession(자기 playwright+browser)을 갖는다. 인증을 수행한
+    경우 같은 storage_state 파일을 재사용해 로그인 세션을 공유한다. 결과는 인덱스로
+    수집하고, 호출부가 입력 순서로 정렬해 결정성을 지킨다.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .browser import BrowserSession
+    from .runner import Runner
+
+    local = threading.local()
+    created: list[BrowserSession] = []
+    lock = threading.Lock()
+
+    def worker_runner() -> Runner:
+        r = getattr(local, "runner", None)
+        if r is not None:
+            return r
+        session = BrowserSession(headless=not args.headed)
+        session.start()
+        if auth_state is not None:
+            session.configure_storage_state(auth_state, preserve=True)
+            session.activate_storage_state()
+        with lock:
+            created.append(session)
+        local.runner = Runner(
+            session, cfg, run_dir,
+            update_baselines=getattr(args, "update_baselines", False),
+            allow_write_checks=getattr(args, "allow_write_checks", False),
+            deadline_monotonic=deadline,
+        )
+        return local.runner
+
+    def task(item):
+        i, sc = item
+        return i, _run_scenario_with_flaky(worker_runner(), sc, i, cfg)
+
+    infra_error = ""
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for i, res in ex.map(task, parallel):
+                collected[i] = res
+                print(f"   [{i}] {sc_name(parallel, i)} … "
+                      + STATUS_LABEL[res.status]
+                      + (" (flaky 의심)" if res.flaky else ""))
+    except Exception as err:
+        infra_error = f"병렬 실행 오류: {_short_exc(err)}"
+    finally:
+        for session in created:
+            try:
+                session.stop()
+            except Exception:
+                pass
+    return infra_error
+
+
+def sc_name(parallel, index: int) -> str:
+    for i, sc in parallel:
+        if i == index:
+            return sc.name
+    return str(index)
+
+
+def _run_scenario_with_flaky(runner, sc, index: int, cfg) -> "object":
+    """시나리오 1개 실행 + 실패 시 flaky 재확인. 병렬·직렬 경로 공용."""
+    res = runner.run(sc, index)
+    if res.status == FAIL and cfg.target.flaky_recheck:
+        retry = runner.run(sc, index, suffix="retry")
+        if retry.status != FAIL:
+            res.status = WARN
+            res.flaky = True
+            evidence = retry.video or retry.trace or "재실행 증적 없음"
+            res.reasons.insert(
+                0,
+                f"간헐(flaky) 의심: 재실행에서는 {STATUS_LABEL[retry.status]}"
+                f" — 최초 실패 증적 유지, 재실행 증적: {evidence}",
+            )
+    return res
+
+
 def _require_scenarios(scenarios: list) -> None:
     if scenarios:
         return
@@ -230,41 +331,52 @@ def cmd_run(args: argparse.Namespace) -> int:
             except RunInfrastructureError as err:
                 infra_error = str(err)
 
+        # 워커는 최소 1(직렬), 시나리오 수를 넘겨봐야 낭비이므로 상한을 둔다.
+        workers = max(1, int(getattr(args, "workers", 1) or 1))
+        workers = min(workers, max(1, len(scenarios))) if scenarios else 1
         if not infra_error:
-            for i, sc in enumerate(scenarios, 1):
+            # 쓰기 검증은 상태를 바꾸므로 병렬에서 제외하고 직렬·최후에 실행한다.
+            # 나머지(읽기 전용)만 병렬 대상이다. 리포트 순서는 항상 입력 순서로
+            # 고정해 결정성을 지킨다(완료 순서가 아니라).
+            parallel, serial = split_scenarios(scenarios)
+            collected: dict[int, object] = {}
+            if workers > 1 and len(parallel) > 1:
+                print(f"③ 읽기 전용 시나리오 {len(parallel)}개 병렬 실행 (워커 {workers})")
+                infra_error = _run_parallel(
+                    parallel, collected, cfg, run_dir, args, deadline, workers,
+                    auth_state=session.storage_state)
+            else:
+                for i, sc in parallel:
+                    infra_error = _deadline_error(
+                        deadline, cfg.target.run_timeout_ms, "시나리오 실행",
+                        completed=len(collected), total=len(scenarios))
+                    if infra_error:
+                        break
+                    print(f"③ [{i}/{len(scenarios)}] {sc.name} ... ", end="", flush=True)
+                    res = _run_scenario_with_flaky(runner, sc, i, cfg)
+                    collected[i] = res
+                    print(STATUS_LABEL[res.status] + (" (flaky 의심)" if res.flaky else ""))
+
+            # 쓰기 검증은 승인된 것만, 항상 직렬로 마지막에 (동일 세션)
+            for i, sc in serial:
+                if infra_error:
+                    break
                 infra_error = _deadline_error(
-                    deadline,
-                    cfg.target.run_timeout_ms,
-                    "시나리오 실행",
-                    completed=len(results),
-                    total=len(scenarios),
-                )
+                    deadline, cfg.target.run_timeout_ms, "시나리오 실행",
+                    completed=len(collected), total=len(scenarios))
                 if infra_error:
                     break
                 print(f"③ [{i}/{len(scenarios)}] {sc.name} ... ", end="", flush=True)
-                res = runner.run(sc, i)
-                if res.status == FAIL and cfg.target.flaky_recheck:
-                    print("실패 → 재실행(간헐 확인) ... ", end="", flush=True)
-                    retry = runner.run(sc, i, suffix="retry")
-                    if retry.status != FAIL:
-                        res.status = WARN
-                        res.flaky = True
-                        evidence = retry.video or retry.trace or "재실행 증적 없음"
-                        res.reasons.insert(
-                            0,
-                            f"간헐(flaky) 의심: 재실행에서는 {STATUS_LABEL[retry.status]}"
-                            f" — 최초 실패 증적 유지, 재실행 증적: {evidence}",
-                        )
-                results.append(res)
+                res = _run_scenario_with_flaky(runner, sc, i, cfg)
+                collected[i] = res
                 print(STATUS_LABEL[res.status] + (" (flaky 의심)" if res.flaky else ""))
+
+            # 입력 순서로 정렬해 결정적 리포트 순서 보장
+            results = order_results(collected)
             if not infra_error:
                 infra_error = _deadline_error(
-                    deadline,
-                    cfg.target.run_timeout_ms,
-                    "시나리오 실행",
-                    completed=len(results),
-                    total=len(scenarios),
-                )
+                    deadline, cfg.target.run_timeout_ms, "시나리오 실행",
+                    completed=len(results), total=len(scenarios))
     except RunInfrastructureError as err:
         infra_error = infra_error or str(err)
     except BrowserGoneError as err:
@@ -399,6 +511,12 @@ def main(argv: list[str] | None = None) -> int:
         "--allow-write-checks",
         action="store_true",
         help="YAML의 write_checks 실행을 명시적으로 승인(테스트/스테이징 전용)",
+    )
+    p_run.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="읽기 전용 시나리오 병렬 워커 수(기본 1=직렬). 쓰기 검증은 항상 직렬·최후",
     )
     p_run.set_defaults(func=cmd_run)
     p_disc = sub.add_parser("discover", parents=[common], help="크롤링·인벤토리만 수행")
