@@ -7,7 +7,7 @@
 
 - 안전 구현 커밋: `f16fe28` (`Harden Runner execution safety`)
 - SQL 조회 전용 경계 커밋: `50377f8` (`Enforce read-only oracle SQL`)
-- GitHub 상태: `a5e5d38`까지 기준 브랜치에 push 완료
+- GitHub 상태: 기능 기준 `a5e5d38`과 이 인수인계까지 기준 브랜치에 push 완료
 
 ## 1. 프로젝트 역할
 
