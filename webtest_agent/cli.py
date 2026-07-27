@@ -90,6 +90,46 @@ def _check_target_available(
         ctx.close()
 
 
+_A11Y_LABEL = {
+    "img-alt": "대체 텍스트(alt) 없는 이미지", "input-label": "라벨 없는 입력",
+    "empty-name": "접근 가능한 이름 없는 버튼/링크", "html-lang": "html lang 없음",
+    "dup-id": "중복 id", "heading-skip": "제목 레벨 건너뜀",
+    "positive-tabindex": "양수 tabindex", "no-main": "본문(main) 랜드마크 없음",
+    "table-no-th": "헤더(th) 없는 표",
+}
+
+
+def _a11y_scenario_result(pages, severity: str):
+    """크롤링한 페이지의 접근성 이슈를 하나의 판정 시나리오로 합친다.
+
+    severity=fail이면 이슈가 있을 때 실패, warn이면 경고. 정보성(info)일 때는
+    이 함수를 호출하지 않는다(시나리오를 만들지 않음).
+    """
+    from .models import FAIL, PASS, WARN, ScenarioResult
+
+    by_type: dict[str, int] = {}
+    pages_with_issues = 0
+    for p in pages:
+        if p.a11y:
+            pages_with_issues += 1
+        for issue in p.a11y:
+            by_type[issue["type"]] = by_type.get(issue["type"], 0) + 1
+
+    total = sum(by_type.values())
+    res = ScenarioResult(name="접근성 기본 점검", kind="a11y_check", page="(크롤링 전체)",
+                         description="크롤링한 페이지의 명백한 접근성 위반 점검 (간이·내장)")
+    if total == 0:
+        res.status = PASS
+        res.reasons.append("발견된 접근성 위반 없음 (간이 점검 기준)")
+        return res
+
+    res.status = FAIL if severity == "fail" else WARN
+    summary = ", ".join(f"{_A11Y_LABEL.get(t, t)} {c}건" for t, c in sorted(by_type.items()))
+    res.reasons.append(
+        f"접근성 위반 {total}건 / {pages_with_issues}개 페이지 — {summary}")
+    return res
+
+
 def split_scenarios(scenarios):
     """(병렬 가능=읽기 전용, 직렬 전용=쓰기) 인덱스 쌍 목록으로 나눈다.
 
@@ -296,9 +336,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                     "crawl.exclude_patterns를 확인하세요."
                 )
 
+        a11y_scenario = None
         if not infra_error and cfg.a11y.enabled:
             issues = sum(len(p.a11y) for p in discovery.pages)
-            print(f"   접근성 기본 점검: 이슈 {issues}건 (정보성 — 리포트 참조)")
+            gate = {"info": "정보성 — 리포트 참조", "warn": "경고로 판정",
+                    "fail": "실패로 판정"}[cfg.a11y.severity]
+            print(f"   접근성 기본 점검: 이슈 {issues}건 ({gate})")
+            if cfg.a11y.severity != "info":
+                a11y_scenario = _a11y_scenario_result(discovery.pages, cfg.a11y.severity)
 
         scenarios = []
         if not infra_error:
@@ -327,7 +372,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                   f" + 반응형 {len(cfg.responsive_checks)}"
                   f" + 쓰기 검증 {len(write_scenarios)} + 스윕 {len(scenarios) - fixed})")
             try:
-                _require_scenarios(scenarios)
+                # a11y 게이트(warn/fail)도 실행 대상이므로 '0개' 판정에서 함께 센다.
+                _require_scenarios(scenarios or ([a11y_scenario] if a11y_scenario else []))
             except RunInfrastructureError as err:
                 infra_error = str(err)
 
@@ -373,6 +419,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
             # 입력 순서로 정렬해 결정적 리포트 순서 보장
             results = order_results(collected)
+            if a11y_scenario is not None:
+                results.append(a11y_scenario)   # 접근성 게이트(warn/fail)를 판정에 포함
             if not infra_error:
                 infra_error = _deadline_error(
                     deadline, cfg.target.run_timeout_ms, "시나리오 실행",

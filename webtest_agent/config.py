@@ -230,8 +230,13 @@ class NotifyConfig:
 
 @dataclass
 class A11yConfig:
-    """접근성 기본 점검(간이·내장) — 크롤링한 페이지에 정보성으로 보고 (판정에 영향 없음)."""
+    """접근성 기본 점검(간이·내장) — 크롤링한 페이지 대상.
+
+    severity: info(기본, 정보성 — 판정 영향 없음) | warn(이슈 있으면 경고) |
+    fail(이슈 있으면 실패). axe 수준의 정밀 검사는 아니며, 명백한 위반만 잡는다.
+    """
     enabled: bool = False
+    severity: str = "info"
 
 
 @dataclass
@@ -498,7 +503,12 @@ def load_config(path: str | Path) -> AgentConfig:
             on=on,
         )
 
-    a11y = A11yConfig(enabled=bool(_sub(data, "a11y").get("enabled", False)))
+    a11y_raw = _sub(data, "a11y")
+    a11y_severity = str(a11y_raw.get("severity", "info"))
+    if a11y_severity not in ("info", "warn", "fail"):
+        raise ConfigError("a11y.severity는 info, warn, fail 중 하나여야 합니다")
+    a11y = A11yConfig(enabled=bool(a11y_raw.get("enabled", False)),
+                      severity=a11y_severity)
 
     auth: AuthConfig | None = None
     a_raw = data.get("auth")

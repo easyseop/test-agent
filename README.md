@@ -30,7 +30,7 @@
 | 쓰기가 DB에 반영되는가 | `write_checks` — `--allow-write-checks`로 명시적으로 승인한 시드/스테이징 실행만 허용 | 기대 변화량과 다르면 **실패** |
 | 화면이 예전과 같은가 | `visual_checks` — 기준선(스냅샷) 대비 픽셀 비교, diff 이미지 생성. 의도된 변경은 `run --update-baselines`로 승인 | 불일치 → **경고** (severity: fail 선택 가능) |
 | 작은 화면에서 안 깨지는가 | `responsive_checks` — 여러 뷰포트 폭에서 가로 오버플로(`scrollWidth > clientWidth`) 검출, 원인 요소 지목 | 오버플로 → **실패** (결정적 불변식) |
-| 접근성 기본 상태 | `a11y.enabled` — alt 없는 이미지·라벨 없는 입력 등 간이 점검 | 정보성 (판정 미반영) |
+| 접근성 기본 상태 | `a11y.enabled` — alt·라벨·중복 id·제목 레벨·tabindex·main 랜드마크·표 헤더 등 간이 점검 | `a11y.severity`: info(기본·정보성) / warn / fail 로 판정 게이팅 선택 |
 | 위험 버튼 안전장치 | 자동 스윕은 저장·삭제·결제·발송·로그아웃 등을 설정과 실행 양쪽에서 차단 | 이유와 함께 리포트에 기록 |
 
 또한 매 실행마다 **직전 실행과 비교(diff)** 해 "신규 실패 / 복구 / 계속 실패"를 리포트와 CLI에 표시하고, `target.flaky_recheck: true`면 실패 시나리오를 1회 재실행해 간헐(flaky) 의심을 경고로 구분하며, `notify.webhook_url`을 설정하면 실행 결과를 **웹훅(Slack Incoming Webhook 호환)** 으로 전송합니다.

@@ -13,7 +13,7 @@ BADGE = {PASS: ("통과", "#16a34a"), WARN: ("경고", "#d97706"), FAIL: ("실�
 KIND_LABEL = {"sweep_button": "버튼 스윕", "sweep_link": "링크 스윕",
               "data_check": "데이터 검증", "spec_check": "명세 검증",
               "write_check": "쓰기 검증", "visual_check": "시각 회귀",
-              "responsive_check": "반응형"}
+              "responsive_check": "반응형", "a11y_check": "접근성"}
 
 _A11Y_LABEL = {"img-alt": "대체 텍스트(alt) 없는 이미지", "input-label": "라벨 없는 입력 요소",
                "empty-name": "접근 가능한 이름 없는 버튼/링크", "html-lang": "html lang 속성 없음",

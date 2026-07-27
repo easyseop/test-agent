@@ -76,6 +76,28 @@ JS_A11Y = """() => {
   document.querySelectorAll('[id]').forEach(el => { ids[el.id] = (ids[el.id] || 0) + 1; });
   Object.entries(ids).filter(([, c]) => c > 1)
     .forEach(([id, c]) => issues.push({ type: 'dup-id', detail: '#' + id + ' x' + c }));
+  // 제목(heading) 레벨을 건너뛰면 스크린리더 목차가 깨진다 (h1 → h3)
+  let prev = 0;
+  document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(el => {
+    const level = Number(el.tagName[1]);
+    if (prev && level > prev + 1)
+      issues.push({ type: 'heading-skip', detail: 'h' + prev + ' → h' + level + ': ' + snippet(el) });
+    prev = level;
+  });
+  // 양수 tabindex는 포커스 순서를 왜곡하는 안티패턴
+  document.querySelectorAll('[tabindex]').forEach(el => {
+    if (Number(el.getAttribute('tabindex')) > 0)
+      issues.push({ type: 'positive-tabindex', detail: 'tabindex=' + el.getAttribute('tabindex') + ' ' + snippet(el) });
+  });
+  // 본문 랜드마크(main)가 없으면 '본문 바로가기'가 동작하지 않는다
+  if (!document.querySelector('main, [role=main]'))
+    issues.push({ type: 'no-main', detail: '' });
+  // 데이터 표(행 5개 이상)에 th 헤더가 없으면 셀 의미를 읽을 수 없다
+  document.querySelectorAll('table').forEach(el => {
+    const rows = el.querySelectorAll('tr').length;
+    if (rows >= 5 && el.querySelectorAll('th').length === 0)
+      issues.push({ type: 'table-no-th', detail: rows + '행 표에 th 없음: ' + snippet(el) });
+  });
   return issues;
 }"""
 
