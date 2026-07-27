@@ -22,7 +22,11 @@ class _Page:
 
     def goto(self, path, **kwargs):
         self.url = f"http://example.test{path}"
-        self.monitor.console_errors.extend(getattr(self.monitor, "load_console", []))
+        load_console = getattr(self.monitor, "load_console", [])
+        self.monitor.console_errors.extend(load_console)
+        # 실제 PageMonitor와 같은 길이의 URL 목록을 유지한다 (허용 패턴 필터용)
+        self.monitor.console_error_urls.extend(
+            getattr(self.monitor, "load_console_urls", [""] * len(load_console)))
         self.monitor.page_errors.extend(getattr(self.monitor, "load_page_errors", []))
         self.monitor.http_failures.extend(getattr(self.monitor, "load_http", []))
 
@@ -47,6 +51,7 @@ class _Session:
 def _monitor(**load_signals):
     return SimpleNamespace(
         console_errors=[],
+        console_error_urls=[],
         page_errors=[],
         http_failures=[],
         dialogs=[],

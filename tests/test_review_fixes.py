@@ -179,3 +179,55 @@ def test_write_delta_survives_large_integers():
     pre, post = Decimal("9007199254740992"), Decimal("9007199254740993")
     assert post - pre == 1
     assert float(post) - float(pre) != 1     # 수정의 근거 (대조군)
+
+
+# ── 콘솔 에러도 HTTP 허용 목록으로 걸러야 한다 ──────────────────
+
+class _FakeMonitor:
+    def __init__(self, pairs):
+        self.console_errors = [text for text, _ in pairs]
+        self.console_error_urls = [url for _, url in pairs]
+
+
+def _runner_with_ignores(patterns):
+    from types import SimpleNamespace
+    from webtest_agent.runner import Runner
+    cfg = SimpleNamespace(target=SimpleNamespace(ignore_http_error_patterns=patterns))
+    return Runner.__new__(Runner), cfg
+
+
+def test_console_errors_respect_ignore_patterns():
+    """리소스 실패는 HTTP 실패와 콘솔 에러로 동시에 관측된다 — 같이 걸러야 한다."""
+    runner, cfg = _runner_with_ignores([r"/health$"])
+    runner.cfg = cfg
+    monitor = _FakeMonitor([
+        ("Failed to load resource: 503", "http://app/health"),
+        ("Uncaught TypeError: x is not a function", ""),
+    ])
+    assert runner._console_errors(monitor) == ["Uncaught TypeError: x is not a function"]
+
+
+def test_console_errors_without_url_are_kept():
+    """스크립트 오류처럼 URL이 없는 콘솔 에러는 항상 판정에 남는다."""
+    runner, cfg = _runner_with_ignores([r".*"])
+    runner.cfg = cfg
+    monitor = _FakeMonitor([("Uncaught ReferenceError: showSummry", "")])
+    assert runner._console_errors(monitor) == ["Uncaught ReferenceError: showSummry"]
+
+
+def test_favicon_console_error_is_dropped_by_monitor():
+    """favicon 404는 HTTP 실패에서 제외되므로 콘솔에서도 제외돼야 한다."""
+    from webtest_agent.browser import PageMonitor
+
+    class _Msg:
+        type = "error"
+        text = "Failed to load resource: the server responded with a status of 404"
+
+        def __init__(self, url):
+            self.location = {"url": url}
+
+    monitor = PageMonitor()
+    monitor._on_console(_Msg("http://app/favicon.ico"))
+    monitor._on_console(_Msg("http://app/api/orders"))
+    assert monitor.console_errors == [_Msg("x").text]
+    assert monitor.console_error_urls == ["http://app/api/orders"]

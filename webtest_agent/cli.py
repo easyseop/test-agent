@@ -16,7 +16,7 @@ from .history import diff_for
 from .models import FAIL, STATUS_LABEL, WARN, RunMeta
 from .notify import build_payload, send_webhook
 from .report import write_reports
-from .runner import Runner
+from .runner import BrowserGoneError, Runner
 from .scenarios import (build_data_checks, build_spec_checks, build_sweep,
                         block_write_checks, build_visual_checks,
                         build_write_checks)
@@ -28,6 +28,12 @@ class RunInfrastructureError(RuntimeError):
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _short_exc(err: Exception) -> str:
+    text = str(err).strip().splitlines()
+    head = text[0] if text else err.__class__.__name__
+    return f"{err.__class__.__name__}: {head}"[:300]
 
 
 def _pw_version() -> str:
@@ -118,7 +124,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     results = []
     infra_error = ""
 
-    with BrowserSession(headless=not args.headed) as session:
+    # 브라우저 기동 실패처럼 판정 이전 단계의 예외는 '제품 실패'가 아니라
+    # 실행 불가(infra_error)다. 여기서 잡지 않으면 파이썬 traceback으로 죽어
+    # 종료코드 1(계약상 '유효한 실행 + 실패')로 오해되고 리포트도 남지 않는다.
+    try:
+      with BrowserSession(headless=not args.headed) as session:
         meta.browser_version = session.version
         allow_write_checks = bool(getattr(args, "allow_write_checks", False))
         runner = Runner(
@@ -252,6 +262,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                     completed=len(results),
                     total=len(scenarios),
                 )
+    except RunInfrastructureError as err:
+        infra_error = infra_error or str(err)
+    except BrowserGoneError as err:
+        infra_error = infra_error or (
+            f"브라우저가 실행 도중 예기치 않게 종료됨: {err} — "
+            "환경(메모리·샌드박스)을 확인하세요. 이 실행은 제품 판정이 아닙니다"
+        )
+    except Exception as err:  # 브라우저 기동·세션 준비 등 판정 이전 단계의 예외
+        infra_error = infra_error or f"실행 환경 오류: {_short_exc(err)}"
 
     meta.finished_at = _now()
     meta.duration_ms = int((_time.monotonic() - t0) * 1000)

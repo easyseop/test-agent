@@ -37,6 +37,9 @@ class PageMonitor:
 
     def __init__(self) -> None:
         self.console_errors: list[str] = []
+        # console_errors와 같은 순서의 발생 위치 URL — 리소스 로드 실패를
+        # HTTP 실패와 같은 기준으로 걸러내기 위해 함께 보관한다.
+        self.console_error_urls: list[str] = []
         self.page_errors: list[str] = []
         self.http_failures: list[HttpFailure] = []
         self.dialogs: list[str] = []
@@ -59,8 +62,18 @@ class PageMonitor:
         return url.split("?")[0].endswith(_IGNORED_URL_SUFFIXES)
 
     def _on_console(self, msg) -> None:
-        if msg.type == "error":
-            self.console_errors.append(msg.text)
+        if msg.type != "error":
+            return
+        try:
+            url = (msg.location or {}).get("url", "") or ""
+        except Exception:
+            url = ""
+        # 리소스 로드 실패 콘솔 메시지는 HTTP 실패와 같은 사건이다.
+        # 한쪽만 걸러내면 favicon 없는 앱이 모든 시나리오에서 실패한다.
+        if url and self._ignored(url):
+            return
+        self.console_errors.append(msg.text)
+        self.console_error_urls.append(url)
 
     def _on_response(self, resp) -> None:
         try:

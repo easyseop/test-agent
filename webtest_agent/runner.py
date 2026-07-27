@@ -26,6 +26,26 @@ class RunDeadlineExceeded(ScenarioTimeout):
     pass
 
 
+class BrowserGoneError(RuntimeError):
+    """브라우저/컨텍스트가 예기치 않게 닫힘 — 제품 실패가 아니라 실행 불가."""
+
+
+_BROWSER_GONE_MARKERS = (
+    "Target page, context or browser has been closed",
+    "Browser closed",
+    "browser has been closed",
+    "Connection closed",
+    "has been closed",
+    "TargetClosedError",
+    "crashed",
+)
+
+
+def _is_browser_gone(err: Exception) -> bool:
+    text = str(err)
+    return any(marker in text for marker in _BROWSER_GONE_MARKERS)
+
+
 def _short(err: Exception) -> str:
     text = str(err).strip().splitlines()
     return (text[0] if text else err.__class__.__name__)[:300]
@@ -86,15 +106,29 @@ class Runner:
         return save_screenshot(page, path, full_page=full_page,
                                mask_selectors=self.cfg.report.mask_selectors)
 
+    def _ignore_patterns(self):
+        return [re.compile(p) for p in self.cfg.target.ignore_http_error_patterns]
+
     def _http_failures(self, failures):
         """명시적으로 허용한 URL 패턴만 제외하고 HTTP 실패를 복사한다."""
-        patterns = [
-            re.compile(pattern)
-            for pattern in self.cfg.target.ignore_http_error_patterns
-        ]
+        patterns = self._ignore_patterns()
         return [
             failure for failure in failures
             if not any(pattern.search(failure.url) for pattern in patterns)
+        ]
+
+    def _console_errors(self, monitor):
+        """콘솔 에러도 HTTP 실패와 같은 허용 목록으로 거른다.
+
+        리소스 로드 실패는 HTTP 실패와 콘솔 에러로 동시에 관측되므로, 한쪽만
+        제외하면 정상으로 합의한 응답이 다른 쪽에서 실패로 되살아난다.
+        """
+        patterns = self._ignore_patterns()
+        urls = getattr(monitor, "console_error_urls", [])
+        return [
+            text for index, text in enumerate(monitor.console_errors)
+            if not (index < len(urls) and urls[index]
+                    and any(p.search(urls[index]) for p in patterns))
         ]
 
     def _bounded_timeout(self, requested_ms: int) -> int:
@@ -230,7 +264,7 @@ class Runner:
                 sr.duration_ms = int((time.monotonic() - t0) * 1000)
                 res.steps.append(sr)
 
-            res.console_errors = list(monitor.console_errors)
+            res.console_errors = self._console_errors(monitor)
             res.page_errors = list(monitor.page_errors)
             res.http_failures = self._http_failures(monitor.http_failures)
             res.dialogs = monitor.dialogs[base_dialog:]
@@ -283,6 +317,10 @@ class Runner:
             hard_fail = True
             res.reasons.append(f"시나리오 타임아웃 초과 ({self.cfg.target.scenario_timeout_ms}ms)")
         except Exception as err:
+            # 브라우저/컨텍스트가 죽은 것은 제품 실패가 아니라 실행 불가다.
+            # 여기서 실패로 처리하면 이후 시나리오도 줄줄이 거짓 실패가 된다.
+            if _is_browser_gone(err):
+                raise BrowserGoneError(_short(err)) from err
             hard_fail = True
             res.reasons.append(f"실행 오류: {_short(err)}")
         finally:
