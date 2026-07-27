@@ -53,10 +53,13 @@ def _is_secret_step(raw_value: str | None, selector: str | None) -> bool:
 STEP_ACTIONS = {
     "goto", "click", "fill", "select", "check", "press", "wait_for", "wait_ms",
     "assert_visible", "assert_text", "assert_url",
+    "assert_not_visible", "assert_not_text",
 }
 _NEEDS_SELECTOR = {"click", "fill", "select", "check", "press", "wait_for",
-                   "assert_visible", "assert_text"}
-_NEEDS_VALUE = {"goto", "fill", "select", "press", "wait_ms", "assert_text", "assert_url"}
+                   "assert_visible", "assert_text",
+                   "assert_not_visible", "assert_not_text"}
+_NEEDS_VALUE = {"goto", "fill", "select", "press", "wait_ms", "assert_text", "assert_url",
+                "assert_not_text"}
 
 
 @dataclass

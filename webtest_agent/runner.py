@@ -81,6 +81,8 @@ def describe_step(step: Step) -> str:
         "assert_visible": f"{sel} 요소가 화면에 보이는지 확인한다",
         "assert_text": f"{sel} 요소에 '{val}' 텍스트가 있는지 확인한다",
         "assert_url": f"주소(URL)가 '{val}' 패턴과 일치하는지 확인한다",
+        "assert_not_visible": f"{sel} 요소가 화면에 보이지 않는지 확인한다",
+        "assert_not_text": f"{sel} 요소에 '{val}' 텍스트가 없는지 확인한다",
     }[step.action]
 
 
@@ -457,6 +459,23 @@ class Runner:
         elif action == "assert_url":
             if not re.search(step.value, page.url):
                 raise AssertionError(f"URL이 패턴 '{step.value}'와 일치하지 않습니다 (실제: {page.url})")
+        elif action == "assert_not_visible":
+            # 요소가 아예 없거나(=hidden 대기 성공) 숨겨져야 통과. 짧은 대기 후 판정.
+            try:
+                page.wait_for_selector(step.selector, state="hidden",
+                                       timeout=self._bounded_timeout(3000))
+            except Exception:
+                raise AssertionError(
+                    f"요소 '{step.selector}'가 화면에서 사라지지 않았습니다 (보이면 안 됨)")
+        elif action == "assert_not_text":
+            loc = page.locator(step.selector).first
+            try:
+                actual = loc.inner_text(timeout=3000)
+            except Exception:
+                actual = ""   # 요소 자체가 없으면 텍스트도 없는 것 → 통과
+            if step.value in actual:
+                raise AssertionError(
+                    f"금지 텍스트 '{step.value}'가 존재합니다 (실제: '{actual[:80]}')")
 
     def _extract_all_pages(self, page, spec) -> tuple[list[str], list[list[str]]]:
         """표 추출 — pagination 설정 시 '다음' 버튼을 순회하며 전체 행을 수집."""

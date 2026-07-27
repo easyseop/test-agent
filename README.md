@@ -26,7 +26,7 @@
 | 필터 조회 데이터가 맞는가 | 화면 표 추출 ↔ **정답원 대조** — SQL 쿼리(`query.db+sql`) 또는 REST API(`query.api`). 페이지네이션 순회 지원 | 불일치 시 누락/초과 행 샘플과 함께 **실패** |
 | 긴 ID가 정확한가 | UI·API·DB 숫자를 float로 바꾸지 않고 문자열 기준 정규화 | 2^53보다 큰 ID도 한 자리 차이를 **실패**로 검출 |
 | 건수 표기가 맞는가 | 화면의 "N건" ↔ 실제 표 행 수 (불변식) | 불일치 → **실패** |
-| 기획 의도대로 동작하는가 | `spec_checks` — 단언 스텝(`assert_visible`/`assert_text`/`assert_url`)으로 기대 동작 명시 | 단언 위반 → **실패** |
+| 기획 의도대로 동작하는가 | `spec_checks` — 단언 스텝(`assert_visible`/`assert_text`/`assert_url` + 부정 단언 `assert_not_visible`/`assert_not_text`)으로 기대 동작 명시 | 단언 위반 → **실패** |
 | 쓰기가 DB에 반영되는가 | `write_checks` — `--allow-write-checks`로 명시적으로 승인한 시드/스테이징 실행만 허용 | 기대 변화량과 다르면 **실패** |
 | 화면이 예전과 같은가 | `visual_checks` — 기준선(스냅샷) 대비 픽셀 비교, diff 이미지 생성. 의도된 변경은 `run --update-baselines`로 승인 | 불일치 → **경고** (severity: fail 선택 가능) |
 | 작은 화면에서 안 깨지는가 | `responsive_checks` — 여러 뷰포트 폭에서 가로 오버플로(`scrollWidth > clientWidth`) 검출, 원인 요소 지목 | 오버플로 → **실패** (결정적 불변식) |

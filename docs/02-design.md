@@ -158,7 +158,7 @@ output_dir: runs
 
 ## 4. 스텝 DSL
 
-`goto`(value=경로) · `click` · `fill`(value) · `select`(value) · `check` · `press`(value=키) · `wait_for` · `wait_ms`(value=ms) · **단언**: `assert_visible`(요소 표시) · `assert_text`(selector+value: 텍스트 포함) · `assert_url`(value: URL 정규식). Playwright 자동 대기 위에서 실행, 스텝 실패(단언 위반 포함) = 시나리오 실패 + 실패 시점 스크린샷.
+`goto`(value=경로) · `click` · `fill`(value) · `select`(value) · `check` · `press`(value=키) · `wait_for` · `wait_ms`(value=ms) · **단언**: `assert_visible`(요소 표시) · `assert_text`(selector+value: 텍스트 포함) · `assert_url`(value: URL 정규식) · **부정 단언**: `assert_not_visible`(요소가 사라짐/숨김) · `assert_not_text`(selector+value: 금지 텍스트 부재). Playwright 자동 대기 위에서 실행, 스텝 실패(단언 위반 포함) = 시나리오 실패 + 실패 시점 스크린샷.
 
 단언만으로 구성된 시나리오는 `spec_checks:` 섹션에 정의한다(§3) — 검증 방법 ③의 실행 형태.
 
