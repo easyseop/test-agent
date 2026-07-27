@@ -11,8 +11,9 @@ from .browser import BrowserSession, save_screenshot
 from .config import MASK, AgentConfig, Step
 from .datacheck import (compare, extract_table, parse_count, run_api_query,
                         run_query, run_scalar_query)
-from .models import (FAIL, PASS, WARN, DataCheckResult, ScenarioResult,
-                     StepResult, VisualResult, WriteCheckResult)
+from .models import (FAIL, PASS, WARN, DataCheckResult, ResponsiveResult,
+                     ScenarioResult, StepResult, ViewportResult, VisualResult,
+                     WriteCheckResult)
 from .scenarios import Scenario, slugify
 from .safety import find_destructive, find_hard_block
 from .visual import compare_images
@@ -81,6 +82,34 @@ def describe_step(step: Step) -> str:
         "assert_text": f"{sel} 요소에 '{val}' 텍스트가 있는지 확인한다",
         "assert_url": f"주소(URL)가 '{val}' 패턴과 일치하는지 확인한다",
     }[step.action]
+
+
+JS_OVERFLOW = """(maxOverflow) => {
+  const doc = document.scrollingElement || document.documentElement;
+  const overflow = doc.scrollWidth - doc.clientWidth;
+  const offenders = [];
+  if (overflow > maxOverflow) {
+    const limit = doc.clientWidth + maxOverflow;
+    const seen = new Set();
+    for (const el of document.querySelectorAll('body *')) {
+      const r = el.getBoundingClientRect();
+      // 화면 밖으로 나간 요소 중, 자식이 아닌 실제 원인에 가까운 것만 추린다
+      if (r.right > limit && el.children.length < 12) {
+        const tag = el.tagName.toLowerCase();
+        const cls = (typeof el.className === 'string' && el.className)
+          ? '.' + el.className.trim().split(/\\s+/)[0] : '';
+        const id = el.id ? '#' + el.id : '';
+        const key = tag + id + cls;
+        if (!seen.has(key)) {
+          seen.add(key);
+          offenders.push(key + ' (right=' + Math.round(r.right) + ')');
+          if (offenders.length >= 8) break;
+        }
+      }
+    }
+  }
+  return { scrollWidth: doc.scrollWidth, clientWidth: doc.clientWidth, overflow, offenders };
+}"""
 
 
 def _dom_size(page) -> int:
@@ -299,6 +328,9 @@ class Runner:
             if scenario.kind == "visual_check" and not step_failed:
                 res.visual = self._visual_check(page, scenario, shots_dir)
 
+            if scenario.kind == "responsive_check" and not step_failed:
+                res.responsive = self._responsive_check(page, scenario, shots_dir)
+
             if scenario.kind == "write_check" and not step_failed and write_pre is not None:
                 spec = scenario.write_spec
                 try:
@@ -462,6 +494,40 @@ class Runner:
             result.note = f"이미지 비교 실패: {_short(err)}"
         return result
 
+    def _responsive_check(self, page, scenario: Scenario, shots_dir: Path) -> ResponsiveResult:
+        spec = scenario.responsive_spec
+        result = ResponsiveResult(max_overflow_px=spec.max_overflow_px)
+        original = self.session.viewport
+        try:
+            for width in spec.viewports:
+                page.set_viewport_size({"width": width, "height": spec.height})
+                self._wait(page, self.cfg.target.settle_ms)
+                data = page.evaluate(JS_OVERFLOW, spec.max_overflow_px)
+                vr = ViewportResult(
+                    width=width, height=spec.height,
+                    scroll_width=int(data["scrollWidth"]),
+                    client_width=int(data["clientWidth"]),
+                    overflow_px=int(data["overflow"]),
+                    ok=int(data["overflow"]) <= spec.max_overflow_px,
+                    offenders=list(data["offenders"]),
+                )
+                if not vr.ok:
+                    shot = shots_dir / f"responsive_{width}px.jpg"
+                    vr.screenshot = self._rel(self._shot(page, shot, full_page=False))
+                result.viewports.append(vr)
+        except RunDeadlineExceeded:
+            raise
+        except Exception as err:
+            result.note = f"반응형 측정 실패: {_short(err)}"
+        finally:
+            # 다음 시나리오에 영향이 없도록 기본 뷰포트로 되돌린다
+            try:
+                page.set_viewport_size(original)
+            except Exception:
+                pass
+        result.matched = not result.note and all(v.ok for v in result.viewports)
+        return result
+
     def _data_check(self, page, scenario: Scenario) -> DataCheckResult:
         spec = scenario.spec
         try:
@@ -536,6 +602,22 @@ class Runner:
                     vis_warn = True
                 res.reasons.append(msg)
 
+        rc = res.responsive
+        rc_failed = False
+        if rc is not None:
+            if rc.note:
+                rc_failed = True
+                res.reasons.append(f"반응형 검증 불가: {rc.note}")
+            elif not rc.matched:
+                rc_failed = True
+                bad = [v for v in rc.viewports if not v.ok]
+                head = bad[0]
+                detail = f" — 예: {', '.join(head.offenders[:3])}" if head.offenders else ""
+                widths = ", ".join(f"{v.width}px(+{v.overflow_px})" for v in bad)
+                res.reasons.append(
+                    f"가로 오버플로: {widths}에서 화면이 옆으로 넘칩니다"
+                    f" (허용 {rc.max_overflow_px}px){detail}")
+
         wc = res.write_check
         wc_failed = False
         if wc is not None:
@@ -550,7 +632,8 @@ class Runner:
 
         step_failed = any(s.status == "fail" for s in res.steps)
         if (hard_fail or step_failed or res.console_errors or res.page_errors
-                or res.http_failures or dc_failed or wc_failed or vis_failed):
+                or res.http_failures or dc_failed or wc_failed or vis_failed
+                or rc_failed):
             res.status = FAIL
         elif vis_warn:
             res.status = WARN

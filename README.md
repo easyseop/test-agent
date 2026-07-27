@@ -29,6 +29,7 @@
 | 기획 의도대로 동작하는가 | `spec_checks` — 단언 스텝(`assert_visible`/`assert_text`/`assert_url`)으로 기대 동작 명시 | 단언 위반 → **실패** |
 | 쓰기가 DB에 반영되는가 | `write_checks` — `--allow-write-checks`로 명시적으로 승인한 시드/스테이징 실행만 허용 | 기대 변화량과 다르면 **실패** |
 | 화면이 예전과 같은가 | `visual_checks` — 기준선(스냅샷) 대비 픽셀 비교, diff 이미지 생성. 의도된 변경은 `run --update-baselines`로 승인 | 불일치 → **경고** (severity: fail 선택 가능) |
+| 작은 화면에서 안 깨지는가 | `responsive_checks` — 여러 뷰포트 폭에서 가로 오버플로(`scrollWidth > clientWidth`) 검출, 원인 요소 지목 | 오버플로 → **실패** (결정적 불변식) |
 | 접근성 기본 상태 | `a11y.enabled` — alt 없는 이미지·라벨 없는 입력 등 간이 점검 | 정보성 (판정 미반영) |
 | 위험 버튼 안전장치 | 자동 스윕은 저장·삭제·결제·발송·로그아웃 등을 설정과 실행 양쪽에서 차단 | 이유와 함께 리포트에 기록 |
 
@@ -44,9 +45,9 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 ## 빠른 시작 (동봉 데모앱)
 
 ```bash
-./scripts/run_demo.sh          # 읽기 전용 기본 모드 → 18개 통과, 위험 동작 차단 기록
+./scripts/run_demo.sh          # 읽기 전용 기본 모드 → 19개 통과, 위험 동작 차단 기록
 ./scripts/run_demo.sh --write  # 시드 DB 주문 등록 검증을 명시적으로 승인
-./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 4건 검출 (종료코드 1이 정상)
+./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 5건 검출 (종료코드 1이 정상)
 ./scripts/run_demo.sh --auth   # 로그인 모드 → 10개 통과 + 인증 상태 자동 삭제
 ./scripts/run_demo.sh --load-error  # 첫 화면 로드 오류 1건 검출 (종료코드 1이 정상)
 ./scripts/run_demo.sh --deadline  # 전체 제한 초과 → 실행 불가·종료코드 2
@@ -58,6 +59,7 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 ✗ 상태필터-shipped   — UI↔DB 불일치: 화면 76건 vs DB 37건 (화면에 초과 39건)   ← delivered가 섞여 나옴
 ✗ 날짜범위-6월       — UI↔DB 불일치: 화면 64건 vs DB 67건 (화면에 누락 3건)    ← 경계일(6/30) 누락
 ✗ 버튼점검 요약 보기 — 페이지 예외: showSummry is not defined                  ← JS 오타
+✗ 메인화면-반응형    — 가로 오버플로: 375px(+875)에서 화면이 옆으로 넘칩니다     ← 고정폭 배너
 ```
 
 수동 실행:

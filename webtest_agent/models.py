@@ -56,6 +56,31 @@ class WriteCheckResult:
 
 
 @dataclass
+class ViewportResult:
+    """한 뷰포트 폭에서의 가로 오버플로 측정."""
+    width: int
+    height: int
+    scroll_width: int = 0
+    client_width: int = 0
+    overflow_px: int = 0
+    ok: bool = True
+    offenders: list[str] = field(default_factory=list)   # 화면 밖으로 나간 요소 샘플
+    screenshot: str = ""          # 오버플로 시 증거 캡처 (run_dir 기준)
+
+
+@dataclass
+class ResponsiveResult:
+    """반응형 점검 — 여러 뷰포트에서 가로 스크롤(오버플로) 발생 여부.
+
+    scrollWidth > clientWidth는 결정적 불변식이므로 판정을 코드가 내린다.
+    """
+    max_overflow_px: int = 2
+    matched: bool = True
+    viewports: list[ViewportResult] = field(default_factory=list)
+    note: str = ""
+
+
+@dataclass
 class VisualResult:
     matched: bool = False
     ratio: float = 0.0            # 달라진 픽셀 비율
@@ -86,6 +111,7 @@ class ScenarioResult:
     data_check: DataCheckResult | None = None
     write_check: WriteCheckResult | None = None
     visual: VisualResult | None = None
+    responsive: ResponsiveResult | None = None
     video: str = ""
     trace: str = ""
     flaky: bool = False          # 실패 후 재실행에서 통과 → 간헐 의심

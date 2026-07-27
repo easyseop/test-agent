@@ -12,7 +12,8 @@ from .models import FAIL, PASS, WARN, BlockedElement, RunMeta, ScenarioResult
 BADGE = {PASS: ("통과", "#16a34a"), WARN: ("경고", "#d97706"), FAIL: ("실패", "#dc2626")}
 KIND_LABEL = {"sweep_button": "버튼 스윕", "sweep_link": "링크 스윕",
               "data_check": "데이터 검증", "spec_check": "명세 검증",
-              "write_check": "쓰기 검증", "visual_check": "시각 회귀"}
+              "write_check": "쓰기 검증", "visual_check": "시각 회귀",
+              "responsive_check": "반응형"}
 
 _A11Y_LABEL = {"img-alt": "대체 텍스트(alt) 없는 이미지", "input-label": "라벨 없는 입력 요소",
                "empty-name": "접근 가능한 이름 없는 버튼/링크", "html-lang": "html lang 속성 없음",
@@ -181,6 +182,12 @@ def _write_walkthrough(path, meta, results) -> None:
         if vis and not vis.baseline_created and not vis.baseline_updated and not vis.note:
             mark = "일치 ✅" if vis.matched else "불일치 ⚠️"
             outcome.append(f"기준선 대비 변화 {vis.ratio * 100:.2f}% → {mark}")
+        rc = r.responsive
+        if rc and not rc.note:
+            widths = ", ".join(
+                f"{v.width}px {'✅' if v.ok else '❌+' + str(v.overflow_px) + 'px'}"
+                for v in rc.viewports)
+            outcome.append(f"반응형 {widths}")
         outcome += r.reasons
         lines.append("")
         lines.append(f"→ **결과: {label}**" + (" — " + " / ".join(outcome) if outcome else ""))
@@ -290,6 +297,39 @@ def _scenario_card(run_dir: Path, index: int, r: ScenarioResult) -> str:
                 figures.append(f"<figure><img src='{src}' alt=''><figcaption>{label}</figcaption></figure>")
         if figures:
             parts.append(f"<div class='shots'>{''.join(figures)}</div>")
+
+    rc = r.responsive
+    if rc is not None:
+        if rc.note:
+            parts.append(f"<p style='font-size:13.5px'>반응형 검증 불가: {_esc(rc.note)}</p>")
+        else:
+            rows = []
+            for v in rc.viewports:
+                if v.ok:
+                    status = "<span style='color:#16a34a'>여백 정상</span>"
+                else:
+                    off = _esc(", ".join(v.offenders[:3])) if v.offenders else ""
+                    status = (f"<b style='color:#dc2626'>가로 오버플로 +{v.overflow_px}px</b>"
+                              + (f"<br><small>{off}</small>" if off else ""))
+                rows.append(
+                    f"<tr><td>{v.width}×{v.height}</td>"
+                    f"<td>scrollWidth {v.scroll_width} / clientWidth {v.client_width}</td>"
+                    f"<td>{status}</td></tr>")
+            parts.append(
+                "<p style='font-size:13.5px'>뷰포트별 가로 오버플로 점검"
+                f" (허용 {rc.max_overflow_px}px)</p>"
+                "<table class='data'><thead><tr><th>뷰포트</th><th>측정</th>"
+                "<th>판정</th></tr></thead><tbody>"
+                + "".join(rows) + "</tbody></table>")
+            figures = []
+            for v in rc.viewports:
+                src = _b64_img(run_dir, v.screenshot)
+                if src:
+                    figures.append(
+                        f"<figure><img src='{src}' alt=''>"
+                        f"<figcaption>{v.width}px 오버플로</figcaption></figure>")
+            if figures:
+                parts.append(f"<div class='shots'>{''.join(figures)}</div>")
 
     wc = r.write_check
     if wc is not None and not wc.note:

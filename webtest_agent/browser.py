@@ -112,6 +112,7 @@ class BrowserSession:
         self.headless = headless
         self._pw = None
         self.browser: Browser | None = None
+        self.viewport = dict(VIEWPORT)   # 반응형 점검이 뷰포트 변경 후 되돌릴 기준값
         # 인증 후 세팅되면 이후 모든 컨텍스트가 로그인 세션을 재사용한다
         self.storage_state: Path | None = None
         self._storage_state_cleanup_path: Path | None = None

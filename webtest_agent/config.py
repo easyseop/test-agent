@@ -207,6 +207,21 @@ class VisualCheckSpec:
 
 
 @dataclass
+class ResponsiveCheckSpec:
+    """반응형 점검 — 여러 뷰포트 폭에서 가로 오버플로(가로 스크롤) 발생 여부.
+
+    scrollWidth > clientWidth + max_overflow_px 이면 실패. 판정은 결정적 코드가 한다.
+    """
+    name: str
+    page: str = "/"
+    description: str = ""
+    steps: list[Step] = field(default_factory=list)
+    viewports: list[int] = field(default_factory=lambda: [375, 768, 1280])
+    height: int = 900
+    max_overflow_px: int = 2      # 스크롤바 등 미세 오차 허용
+
+
+@dataclass
 class NotifyConfig:
     """실행 후 웹훅 알림 (Slack Incoming Webhook 호환 JSON POST)."""
     webhook_url: str
@@ -242,6 +257,7 @@ class AgentConfig:
     spec_checks: list[SpecCheckSpec]
     write_checks: list[WriteCheckSpec]
     visual_checks: list[VisualCheckSpec]
+    responsive_checks: list[ResponsiveCheckSpec]
     report: ReportConfig
     a11y: A11yConfig = field(default_factory=A11yConfig)
     auth: AuthConfig | None = None
@@ -441,6 +457,34 @@ def load_config(path: str | Path) -> AgentConfig:
             severity=severity,
         ))
 
+    responsives: list[ResponsiveCheckSpec] = []
+    for i, raw in enumerate(data.get("responsive_checks") or []):
+        where = f"responsive_checks[{i}]"
+        if not isinstance(raw, dict) or not raw.get("name"):
+            raise ConfigError(f"{where}: name이 필요합니다")
+        vp_raw = raw.get("viewports")
+        if vp_raw is not None:
+            if not isinstance(vp_raw, list) or not vp_raw:
+                raise ConfigError(f"{where}: viewports는 비어 있지 않은 정수 목록이어야 합니다")
+            try:
+                viewports = [int(v) for v in vp_raw]
+            except (TypeError, ValueError) as err:
+                raise ConfigError(f"{where}: viewports 값은 정수여야 합니다 ({err})") from err
+            if any(v <= 0 for v in viewports):
+                raise ConfigError(f"{where}: viewports 폭은 1 이상이어야 합니다")
+        else:
+            viewports = [375, 768, 1280]
+        responsives.append(ResponsiveCheckSpec(
+            name=str(raw["name"]),
+            page=str(raw.get("page", "/")),
+            description=str(raw.get("description", "")),
+            steps=[Step.from_dict(sd, f"{where}.steps[{j}]")
+                   for j, sd in enumerate(raw.get("steps") or [])],
+            viewports=viewports,
+            height=int(raw.get("height", 900)),
+            max_overflow_px=int(raw.get("max_overflow_px", 2)),
+        ))
+
     notify: NotifyConfig | None = None
     n_raw = data.get("notify")
     if n_raw:
@@ -481,6 +525,7 @@ def load_config(path: str | Path) -> AgentConfig:
         spec_checks=specs,
         write_checks=writes,
         visual_checks=visuals,
+        responsive_checks=responsives,
         report=report,
         a11y=a11y,
         auth=auth,

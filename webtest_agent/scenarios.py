@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .config import (AgentConfig, DataCheckSpec, Step, VisualCheckSpec,
-                     WriteCheckSpec)
+from .config import (AgentConfig, DataCheckSpec, ResponsiveCheckSpec, Step,
+                     VisualCheckSpec, WriteCheckSpec)
 from .discovery import Discovery
 from .models import BlockedElement
 from .safety import find_hard_block
@@ -30,6 +30,7 @@ class Scenario:
     spec: DataCheckSpec | None = None
     write_spec: WriteCheckSpec | None = None
     visual_spec: VisualCheckSpec | None = None
+    responsive_spec: ResponsiveCheckSpec | None = None
 
 
 def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario], list[BlockedElement]]:
@@ -135,6 +136,21 @@ def build_visual_checks(cfg: AgentConfig) -> list[Scenario]:
             visual_spec=spec,
         )
         for spec in cfg.visual_checks
+    ]
+
+
+def build_responsive_checks(cfg: AgentConfig) -> list[Scenario]:
+    """반응형 점검 시나리오 — 여러 뷰포트에서 가로 오버플로 검사."""
+    return [
+        Scenario(
+            name=spec.name,
+            kind="responsive_check",
+            page=spec.page,
+            steps=list(spec.steps),
+            description=spec.description,
+            responsive_spec=spec,
+        )
+        for spec in cfg.responsive_checks
     ]
 
 

@@ -177,6 +177,16 @@ visual_checks:
     page: /about
     threshold: 0.01
 
+# 반응형 점검 — 여러 뷰포트 폭에서 가로 오버플로(가로 스크롤) 발생 여부.
+# scrollWidth > clientWidth 는 결정적 불변식이므로 판정을 코드가 내린다.
+# 정상 모드는 전 폭 통과, 버그 모드(DEMO_BUG=1)는 고정폭 배너로 375·768px에서 실패.
+responsive_checks:
+  - name: 메인화면-반응형
+    description: 메인 화면이 모바일·태블릿·데스크톱 폭에서 가로로 넘치지 않아야 한다
+    page: /
+    viewports: [375, 768, 1280]
+    max_overflow_px: 2
+
 a11y:
   enabled: true   # 접근성 기본 점검 (간이·정보성)
 
