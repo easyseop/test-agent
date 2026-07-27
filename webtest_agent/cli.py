@@ -298,6 +298,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     discovery = Discovery()
     blocked = []
     results = []
+    sweep_coverage: dict = {}
     infra_error = ""
 
     # 브라우저 기동 실패처럼 판정 이전 단계의 예외는 '제품 실패'가 아니라
@@ -394,10 +395,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         if not infra_error:
             scenarios = build_data_checks(cfg) + build_spec_checks(cfg)
             if cfg.sweep.enabled:
-                sweep, blocked = build_sweep(discovery, cfg)
+                sweep, blocked, sweep_coverage = build_sweep(discovery, cfg)
                 scenarios += sweep
                 if blocked:
                     print(f"   ⛔ 차단 패턴으로 건너뛴 요소 {len(blocked)}개 (리포트에 기록)")
+                if sweep_coverage.get("capped"):
+                    print(f"   ⚠ 페이지당 상한(max_per_page={cfg.sweep.max_per_page})으로 "
+                          f"{sweep_coverage['capped']}개 미검사 (리포트에 기록)")
             scenarios += build_visual_checks(cfg)
             scenarios += build_responsive_checks(cfg)
             scenarios += build_perf_checks(cfg)
@@ -497,6 +501,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             blocked,
             [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y}
              for p in discovery.pages],
+            coverage=sweep_coverage,
         )
         print("─" * 60)
         print(f"실행 불가: {infra_error}", file=sys.stderr)
@@ -519,13 +524,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     summary = write_reports(run_dir, meta, results, blocked,
                             [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y}
                              for p in discovery.pages],
-                            diff=diff)
+                            diff=diff, coverage=sweep_coverage)
 
     print("─" * 60)
     print(f"실행 완료: 통과 {summary['pass']} · 경고 {summary['warn']} · 실패 {summary['fail']}"
           f" (총 {summary['total']}, {meta.duration_ms / 1000:.1f}s)")
     if summary["flaky"]:
         print(f"간헐(flaky) 의심 {summary['flaky']}건 — 재실행에서 통과했으나 통과로 처리하지 않습니다")
+    if sweep_coverage.get("found"):
+        c = sweep_coverage
+        extra = []
+        if c.get("capped"):
+            extra.append(f"상한초과 {c['capped']}")
+        if c.get("blocked"):
+            extra.append(f"안전차단 {c['blocked']}")
+        note = f" ({', '.join(extra)})" if extra else ""
+        print(f"스윕 커버리지: 발견 {c['found']}개 중 {c['tested']}개 클릭 검사{note}")
     if diff:
         parts = []
         for key, label in (("new_failures", "신규 실패"), ("fixed", "복구"),

@@ -34,14 +34,19 @@ class Scenario:
     perf_spec: PerfCheckSpec | None = None
 
 
-def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario], list[BlockedElement]]:
+def build_sweep(discovery: Discovery, cfg: AgentConfig
+                ) -> tuple[list[Scenario], list[BlockedElement], dict]:
     """인벤토리의 버튼(과 선택적으로 링크)마다 클릭 검증 시나리오를 만든다.
 
     avoid_patterns에 걸리는 요소는 클릭하지 않고 차단 목록에 기록한다.
+    세 번째 반환값은 커버리지 요약 — '조용한 상한'을 드러내기 위해 발견 대비
+    테스트/차단/상한초과/중복·비활성 등을 집계한다.
     """
     scenarios: list[Scenario] = []
     blocked: list[BlockedElement] = []
     avoid = [(p, re.compile(p, re.IGNORECASE)) for p in cfg.sweep.avoid_patterns]
+    cov = {"found": 0, "tested": 0, "blocked": 0, "capped": 0,
+           "skipped_duplicate": 0, "skipped_disabled": 0, "skipped_nonhttp": 0}
 
     for pinfo in discovery.pages:
         elements: list[tuple[str, dict]] = [("button", b) for b in pinfo.elements.get("buttons", [])]
@@ -51,16 +56,18 @@ def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario],
         count = 0
         seen_selectors: set[str] = set()
         for kind, el in elements:
-            if count >= cfg.sweep.max_per_page:
-                break
+            cov["found"] += 1
             selector = el.get("selector") or ""
             if not selector or selector in seen_selectors:
+                cov["skipped_duplicate"] += 1
                 continue
             seen_selectors.add(selector)
             if el.get("disabled"):
+                cov["skipped_disabled"] += 1
                 continue
             text = el.get("text") or el.get("href") or selector
             if kind == "link" and str(el.get("href", "")).startswith(("mailto:", "tel:", "javascript:")):
+                cov["skipped_nonhttp"] += 1
                 continue
 
             # 최소 안전 패턴은 텍스트뿐 아니라 selector와 href에도 적용한다.
@@ -72,6 +79,7 @@ def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario],
                 None,
             )
             if hit:
+                cov["blocked"] += 1
                 blocked.append(BlockedElement(
                     page=pinfo.path,
                     text=text,
@@ -81,6 +89,12 @@ def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario],
                         if hard_hit else "설정의 avoid_patterns와 일치해 자동 탐색에서 제외"
                     ),
                 ))
+                continue
+
+            # 여기까지 온 요소는 테스트 대상이다. 페이지당 상한을 넘으면 '상한 초과'로
+            # 집계만 하고 시나리오는 만들지 않는다(조용히 버리지 않고 드러낸다).
+            if count >= cfg.sweep.max_per_page:
+                cov["capped"] += 1
                 continue
 
             label = "버튼" if kind == "button" else "링크"
@@ -93,8 +107,9 @@ def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario],
                 element_text=text,
             ))
             count += 1
+            cov["tested"] += 1
 
-    return scenarios, blocked
+    return scenarios, blocked, cov
 
 
 def build_data_checks(cfg: AgentConfig) -> list[Scenario]:

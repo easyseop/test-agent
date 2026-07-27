@@ -36,7 +36,7 @@ def test_sweep_hard_blocks_write_actions_even_when_config_is_empty():
         )
     ])
 
-    scenarios, blocked = build_sweep(discovery, _cfg())
+    scenarios, blocked, _cov = build_sweep(discovery, _cfg())
 
     assert [scenario.element_text for scenario in scenarios] == ["조회"]
     assert {item.text for item in blocked} == {"저장", "이메일 발송"}
@@ -59,7 +59,7 @@ def test_sweep_hard_block_also_checks_selector():
         )
     ])
 
-    scenarios, blocked = build_sweep(discovery, _cfg())
+    scenarios, blocked, _cov = build_sweep(discovery, _cfg())
 
     assert scenarios == []
     assert blocked[0].pattern == "delete"

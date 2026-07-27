@@ -54,10 +54,12 @@ def write_reports(
     blocked: list[BlockedElement],
     discovery_pages: list[dict],
     diff: dict | None = None,
+    coverage: dict | None = None,
 ) -> dict:
     summary = summarize(results)
-    _write_json(run_dir / "report.json", meta, summary, results, blocked, discovery_pages, diff)
-    _write_markdown(run_dir / "report.md", meta, summary, results, blocked, diff)
+    _write_json(run_dir / "report.json", meta, summary, results, blocked, discovery_pages,
+                diff, coverage)
+    _write_markdown(run_dir / "report.md", meta, summary, results, blocked, diff, coverage)
     _write_walkthrough(run_dir / "walkthrough.md", meta, results)
     _write_html(run_dir / "report.html", run_dir, meta, summary, results, blocked, diff, discovery_pages)
     _write_junit(run_dir / "report.xml", meta, summary, results)
@@ -117,11 +119,13 @@ def _write_junit(path, meta, summary, results) -> None:
 
 # ── JSON ──────────────────────────────────────────────────────────
 
-def _write_json(path, meta, summary, results, blocked, discovery_pages, diff) -> None:
+def _write_json(path, meta, summary, results, blocked, discovery_pages, diff,
+                coverage=None) -> None:
     payload = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "meta": asdict(meta),
         "summary": summary,
+        "sweep_coverage": coverage or {},
         "diff": diff,
         "blocked_elements": [asdict(b) for b in blocked],
         "scenarios": [r.to_dict() for r in results],
@@ -164,9 +168,24 @@ def _meta_lines(meta: RunMeta, summary: dict) -> list[str]:
     return lines
 
 
-def _write_markdown(path, meta, summary, results, blocked, diff=None) -> None:
+def _coverage_lines(coverage: dict | None) -> list[str]:
+    if not coverage or not coverage.get("found"):
+        return []
+    c = coverage
+    line = (f"- 스윕 커버리지: 발견 {c['found']}개 중 **{c['tested']}개 클릭 검사**"
+            f" · 안전차단 {c.get('blocked', 0)} · 상한초과 {c.get('capped', 0)}"
+            f" · 중복 {c.get('skipped_duplicate', 0)} · 비활성 {c.get('skipped_disabled', 0)}"
+            f" · 링크제외 {c.get('skipped_nonhttp', 0)}")
+    note = ""
+    if c.get("capped"):
+        note = "  \n  ⚠️ 상한(max_per_page)으로 일부 요소를 검사하지 않았습니다 — 필요 시 상향하세요."
+    return [line + note]
+
+
+def _write_markdown(path, meta, summary, results, blocked, diff=None, coverage=None) -> None:
     lines = [f"# {meta.title}", ""]
     lines += _meta_lines(meta, summary)
+    lines += _coverage_lines(coverage)
     lines += _diff_lines(diff)
     lines += ["", "| # | 시나리오 | 종류 | 판정 | 소요 | 비고 |", "|---|---|---|---|---|---|"]
     for i, r in enumerate(results, 1):

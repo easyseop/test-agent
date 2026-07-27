@@ -79,3 +79,60 @@ def test_pass_scenario_not_rechecked():
     res = _run_scenario_with_flaky(runner, _sc("data_check"), 1, _cfg(True))
     assert runner.calls == 1
     assert res.status == PASS
+
+
+# ── 스윕 커버리지 집계 (조용한 상한 방지) ─────────────────────────
+
+def _discovery(buttons=(), links=()):
+    from webtest_agent.discovery import Discovery, PageInfo
+    p = PageInfo(url="http://a/", path="/", title="t", screenshot="",
+                 elements={"buttons": list(buttons), "links": list(links)})
+    d = Discovery(); d.pages = [p]; return d
+
+
+def _sweep_cfg(max_per_page=30):
+    from webtest_agent.config import (AgentConfig, TargetConfig, CrawlConfig,
+                                      SweepConfig, ReportConfig)
+    from webtest_agent.safety import merge_avoid_patterns
+    return AgentConfig(
+        target=TargetConfig(base_url="http://a"), crawl=CrawlConfig(),
+        sweep=SweepConfig(max_per_page=max_per_page, avoid_patterns=merge_avoid_patterns([])),
+        data_checks=[], spec_checks=[], write_checks=[], visual_checks=[],
+        responsive_checks=[], perf_checks=[], report=ReportConfig())
+
+
+def test_coverage_counts_tested_and_capped():
+    from webtest_agent.scenarios import build_sweep
+    buttons = [{"selector": f"#b{i}", "text": f"버튼{i}"} for i in range(5)]
+    scen, blocked, cov = build_sweep(_discovery(buttons=buttons), _sweep_cfg(max_per_page=2))
+    assert cov["found"] == 5
+    assert cov["tested"] == 2
+    assert cov["capped"] == 3
+    assert len(scen) == 2
+
+
+def test_coverage_counts_duplicate_and_disabled():
+    from webtest_agent.scenarios import build_sweep
+    buttons = [{"selector": "#b", "text": "x"}, {"selector": "#b", "text": "x"},   # 중복
+               {"selector": "#c", "text": "y", "disabled": True}]                   # 비활성
+    scen, blocked, cov = build_sweep(_discovery(buttons=buttons), _sweep_cfg())
+    assert cov["skipped_duplicate"] == 1
+    assert cov["skipped_disabled"] == 1
+    assert cov["tested"] == 1
+
+
+def test_coverage_counts_blocked():
+    from webtest_agent.scenarios import build_sweep
+    buttons = [{"selector": "#del", "text": "삭제"}, {"selector": "#ok", "text": "조회"}]
+    scen, blocked, cov = build_sweep(_discovery(buttons=buttons), _sweep_cfg())
+    assert cov["blocked"] == 1
+    assert cov["tested"] == 1
+
+
+def test_coverage_counts_nonhttp_links():
+    from webtest_agent.scenarios import build_sweep
+    links = [{"selector": "#m", "text": "메일", "href": "mailto:a@b.c"},
+             {"selector": "#h", "text": "홈", "href": "/home"}]
+    scen, blocked, cov = build_sweep(_discovery(links=links), _sweep_cfg())
+    assert cov["skipped_nonhttp"] == 1
+    assert cov["tested"] == 1
