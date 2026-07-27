@@ -83,6 +83,11 @@ def test_browser_gone_detected(message):
     "요소 '#btn'가 화면에 보이지 않습니다",
     "Timeout 5000ms exceeded waiting for selector",
     "AssertionError: 기대 텍스트 없음",
+    # 아래는 앱(제품) 쪽 오류다 — 넓은 마커였다면 infra로 오분류됐을 실제 반례
+    "Dialog has been closed by the page",
+    "WebSocket has been closed",
+    "The popup has been closed",
+    "Assertion failed: modal has been closed",
 ])
 def test_ordinary_failures_are_not_browser_gone(message):
     assert _is_browser_gone(Exception(message)) is False

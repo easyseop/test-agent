@@ -30,14 +30,20 @@ class BrowserGoneError(RuntimeError):
     """브라우저/컨텍스트가 예기치 않게 닫힘 — 제품 실패가 아니라 실행 불가."""
 
 
+# Playwright가 브라우저/드라이버 자체의 소실에만 쓰는 구체적 문구로 한정한다.
+# "has been closed"·"crashed" 같은 넓은 조각은 앱의 다이얼로그·웹소켓·모달
+# 오류(정상 제품 실패)까지 삼켜 infra로 오분류하므로 쓰지 않는다.
 _BROWSER_GONE_MARKERS = (
     "Target page, context or browser has been closed",
-    "Browser closed",
-    "browser has been closed",
-    "Connection closed",
-    "has been closed",
+    "Target closed",
     "TargetClosedError",
-    "crashed",
+    "Browser has been closed",
+    "Browser closed",
+    "browserContext.newPage",          # 컨텍스트 생성 실패 = 브라우저 소실
+    "BrowserType.launch",
+    "Browser.newContext",
+    "has crashed",                     # "Page has crashed" 등 Playwright 문구
+    "Page crashed",
 )
 
 
