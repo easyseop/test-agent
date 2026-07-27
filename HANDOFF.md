@@ -7,7 +7,7 @@
 
 - 안전 구현 커밋: `f16fe28` (`Harden Runner execution safety`)
 - SQL 조회 전용 경계 커밋: `50377f8` (`Enforce read-only oracle SQL`)
-- GitHub 상태: 원격보다 로컬 커밋이 앞서며, 아직 push하지 않음
+- GitHub 상태: `a5e5d38`까지 기준 브랜치에 push 완료
 
 ## 1. 프로젝트 역할
 
@@ -187,7 +187,7 @@ Runner의 현재 안전 P0와 DB 정답원 SQL 안전 경계는 완료됐다. �
 - 최신 Runner normal profile 7/7 통과
 - `infra_error` 우선 처리와 상태·종료코드 충돌 차단
 - Lab `docs/USER_GUIDE.md`, `HANDOFF.md` 갱신
-- GitHub 반영 전
+- Lab `main`의 `63d6cab`까지 GitHub 반영 완료
 
 같은 날 최신 Runner 로컬 작업본의 Auth Lab 9-profile 탐색 측정도 완료했다.
 
@@ -197,9 +197,9 @@ Runner의 현재 안전 P0와 DB 정답원 SQL 안전 경계는 완료됐다. �
 - `AUTH-B08` 1개 미탐
 - 예상 밖 finding 0, 실행 불가 0
 
-원격에 고정된 Runner 커밋이 아니므로 Lab의 공식 private baseline은 갱신하지
-않았다. 이제 실제 대상 정보를 받거나, Runner·Lab 로컬 변경을 GitHub에
-반영한 뒤 커밋 SHA 기준으로 같은 측정을 반복한다.
+탐색 측정에 사용한 `f16fe28`과 최신 Runner `a5e5d38`은 이제 원격 기준
+브랜치에 고정됐다. 실제 대상 정보를 받거나, `a5e5d38`을 기준으로 같은 측정을
+반복해 Lab의 공식 private baseline을 갱신한다.
 
 LLM Wiki 구축은 사용자가 다시 요청하기 전까지 범위에서 제외한다.
 
@@ -223,7 +223,7 @@ docs/USER_GUIDE.md를 먼저 읽어줘.
 Runner HANDOFF.md와 docs/USER_GUIDE.md를 먼저 읽어줘.
 완료된 안전 P0와 Lab meta.status 연결을 유지해줘.
 실제 대상 URL이 있으면 사이트별 테스트 계획·YAML을 작성하고,
-없으면 GitHub 반영 승인 여부를 확인한 뒤 최신 커밋의 9-profile 기준선을 측정해줘.
+없으면 GitHub에 고정된 a5e5d38의 9-profile 공식 기준선을 측정해줘.
 비개발자용 사용자 가이드를 함께 갱신하고,
 유닛 테스트와 demo/auth E2E를 검증한 뒤 HANDOFF.md에 결과를 기록해줘.
 토큰·비밀번호·쿠키는 문서나 커밋에 넣지 마.
