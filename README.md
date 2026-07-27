@@ -30,6 +30,8 @@
 | 쓰기가 DB에 반영되는가 | `write_checks` — `--allow-write-checks`로 명시적으로 승인한 시드/스테이징 실행만 허용 | 기대 변화량과 다르면 **실패** |
 | 화면이 예전과 같은가 | `visual_checks` — 기준선(스냅샷) 대비 픽셀 비교, diff 이미지 생성. 의도된 변경은 `run --update-baselines`로 승인 | 불일치 → **경고** (severity: fail 선택 가능) |
 | 작은 화면에서 안 깨지는가 | `responsive_checks` — 여러 뷰포트 폭에서 가로 오버플로(`scrollWidth > clientWidth`) 검출, 원인 요소 지목 | 오버플로 → **실패** (결정적 불변식) |
+| 링크가 살아 있는가 | `link_check` — 크롤링으로 발견한 링크의 HTTP 상태 전수 점검(같은 출처 기본) | 4xx/5xx/연결 실패 → **실패** (severity 선택) |
+| 로드가 빠른가 | `perf_checks` — 페이지 로드 지표(load/DCL/FCP/response)를 예산(ms)과 비교 | 예산 초과 → **실패** (결정적) |
 | 접근성 기본 상태 | `a11y.enabled` — alt·라벨·중복 id·제목 레벨·tabindex·main 랜드마크·표 헤더 등 간이 점검 | `a11y.severity`: info(기본·정보성) / warn / fail 로 판정 게이팅 선택 |
 | 위험 버튼 안전장치 | 자동 스윕은 저장·삭제·결제·발송·로그아웃 등을 설정과 실행 양쪽에서 차단 | 이유와 함께 리포트에 기록 |
 

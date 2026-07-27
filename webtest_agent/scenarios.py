@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .config import (AgentConfig, DataCheckSpec, ResponsiveCheckSpec, Step,
-                     VisualCheckSpec, WriteCheckSpec)
+from .config import (AgentConfig, DataCheckSpec, PerfCheckSpec,
+                     ResponsiveCheckSpec, Step, VisualCheckSpec, WriteCheckSpec)
 from .discovery import Discovery
 from .models import BlockedElement
 from .safety import find_hard_block
@@ -31,6 +31,7 @@ class Scenario:
     write_spec: WriteCheckSpec | None = None
     visual_spec: VisualCheckSpec | None = None
     responsive_spec: ResponsiveCheckSpec | None = None
+    perf_spec: PerfCheckSpec | None = None
 
 
 def build_sweep(discovery: Discovery, cfg: AgentConfig) -> tuple[list[Scenario], list[BlockedElement]]:
@@ -151,6 +152,21 @@ def build_responsive_checks(cfg: AgentConfig) -> list[Scenario]:
             responsive_spec=spec,
         )
         for spec in cfg.responsive_checks
+    ]
+
+
+def build_perf_checks(cfg: AgentConfig) -> list[Scenario]:
+    """성능 예산 시나리오 — 페이지 로드 지표를 예산과 비교."""
+    return [
+        Scenario(
+            name=spec.name,
+            kind="perf_check",
+            page=spec.page,
+            steps=list(spec.steps),
+            description=spec.description,
+            perf_spec=spec,
+        )
+        for spec in cfg.perf_checks
     ]
 
 

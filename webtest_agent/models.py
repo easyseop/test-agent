@@ -81,6 +81,16 @@ class ResponsiveResult:
 
 
 @dataclass
+class PerfResult:
+    """성능 예산 — 페이지 로드 지표를 예산(ms)과 비교. 초과 시 실패(결정적)."""
+    metric: str = "load"          # load | dcl | fcp | response
+    measured_ms: float = 0.0
+    budget_ms: int = 0
+    matched: bool = True
+    note: str = ""
+
+
+@dataclass
 class VisualResult:
     matched: bool = False
     ratio: float = 0.0            # 달라진 픽셀 비율
@@ -112,6 +122,7 @@ class ScenarioResult:
     write_check: WriteCheckResult | None = None
     visual: VisualResult | None = None
     responsive: ResponsiveResult | None = None
+    perf: PerfResult | None = None
     video: str = ""
     trace: str = ""
     flaky: bool = False          # 실패 후 재실행에서 통과 → 간헐 의심

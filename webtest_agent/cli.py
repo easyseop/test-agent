@@ -18,8 +18,9 @@ from .notify import build_payload, send_webhook
 from .report import write_reports
 from .runner import BrowserGoneError, Runner
 from .scenarios import (build_data_checks, build_spec_checks, build_sweep,
-                        block_write_checks, build_responsive_checks,
-                        build_visual_checks, build_write_checks)
+                        block_write_checks, build_perf_checks,
+                        build_responsive_checks, build_visual_checks,
+                        build_write_checks)
 
 
 class RunInfrastructureError(RuntimeError):
@@ -399,6 +400,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     print(f"   ⛔ 차단 패턴으로 건너뛴 요소 {len(blocked)}개 (리포트에 기록)")
             scenarios += build_visual_checks(cfg)
             scenarios += build_responsive_checks(cfg)
+            scenarios += build_perf_checks(cfg)
             write_scenarios = build_write_checks(cfg) if allow_write_checks else []
             if cfg.write_checks and not allow_write_checks:
                 write_blocks = block_write_checks(cfg)
@@ -410,10 +412,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             scenarios += write_scenarios  # 승인된 쓰기 검증은 데이터 상태를 바꾸므로 마지막에
             fixed = (len(cfg.data_checks) + len(cfg.spec_checks)
                      + len(cfg.visual_checks) + len(cfg.responsive_checks)
-                     + len(write_scenarios))
+                     + len(cfg.perf_checks) + len(write_scenarios))
             print(f"② 시나리오 {len(scenarios)}개 생성 (데이터 검증 {len(cfg.data_checks)}"
                   f" + 명세 검증 {len(cfg.spec_checks)} + 시각 회귀 {len(cfg.visual_checks)}"
-                  f" + 반응형 {len(cfg.responsive_checks)}"
+                  f" + 반응형 {len(cfg.responsive_checks)} + 성능 {len(cfg.perf_checks)}"
                   f" + 쓰기 검증 {len(write_scenarios)} + 스윕 {len(scenarios) - fixed})")
             try:
                 # a11y·링크 게이트도 실행 대상이므로 '0개' 판정에서 함께 센다.

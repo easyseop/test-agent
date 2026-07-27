@@ -11,9 +11,9 @@ from .browser import BrowserSession, save_screenshot
 from .config import MASK, AgentConfig, Step
 from .datacheck import (compare, extract_table, parse_count, run_api_query,
                         run_query, run_scalar_query)
-from .models import (FAIL, PASS, WARN, DataCheckResult, ResponsiveResult,
-                     ScenarioResult, StepResult, ViewportResult, VisualResult,
-                     WriteCheckResult)
+from .models import (FAIL, PASS, WARN, DataCheckResult, PerfResult,
+                     ResponsiveResult, ScenarioResult, StepResult,
+                     ViewportResult, VisualResult, WriteCheckResult)
 from .scenarios import Scenario, slugify
 from .safety import find_destructive, find_hard_block
 from .visual import compare_images
@@ -109,6 +109,24 @@ JS_OVERFLOW = """(maxOverflow) => {
     }
   }
   return { scrollWidth: doc.scrollWidth, clientWidth: doc.clientWidth, overflow, offenders };
+}"""
+
+
+JS_PERF = """(metric) => {
+  const nav = performance.getEntriesByType('navigation')[0];
+  if (!nav) return { value: -1, note: 'navigation timing 없음' };
+  const t = {
+    load: nav.loadEventEnd,
+    dcl: nav.domContentLoadedEventEnd,
+    response: nav.responseEnd,
+  };
+  if (metric === 'fcp') {
+    const fcp = performance.getEntriesByType('paint')
+      .find(e => e.name === 'first-contentful-paint');
+    return { value: fcp ? fcp.startTime : -1, note: fcp ? '' : 'FCP 미측정' };
+  }
+  const v = t[metric];
+  return { value: (v === undefined || v === null) ? -1 : v, note: '' };
 }"""
 
 
@@ -331,6 +349,9 @@ class Runner:
             if scenario.kind == "responsive_check" and not step_failed:
                 res.responsive = self._responsive_check(page, scenario, shots_dir)
 
+            if scenario.kind == "perf_check" and not step_failed:
+                res.perf = self._perf_check(page, scenario)
+
             if scenario.kind == "write_check" and not step_failed and write_pre is not None:
                 spec = scenario.write_spec
                 try:
@@ -531,6 +552,24 @@ class Runner:
         result.matched = not result.note and all(v.ok for v in result.viewports)
         return result
 
+    def _perf_check(self, page, scenario: Scenario) -> PerfResult:
+        spec = scenario.perf_spec
+        result = PerfResult(metric=spec.metric, budget_ms=spec.budget_ms)
+        try:
+            data = page.evaluate(JS_PERF, spec.metric)
+        except Exception as err:
+            result.note = f"성능 측정 실패: {_short(err)}"
+            result.matched = False
+            return result
+        value = float(data.get("value", -1))
+        if value < 0:
+            result.note = data.get("note") or "지표를 측정할 수 없습니다"
+            result.matched = False
+            return result
+        result.measured_ms = round(value, 1)
+        result.matched = value <= spec.budget_ms
+        return result
+
     def _data_check(self, page, scenario: Scenario) -> DataCheckResult:
         spec = scenario.spec
         try:
@@ -627,6 +666,20 @@ class Runner:
                     f"가로 오버플로: {widths}에서 화면이 옆으로 넘칩니다"
                     f" (허용 {rc.max_overflow_px}px){detail}")
 
+        pc = res.perf
+        pc_failed = False
+        if pc is not None:
+            _METRIC = {"load": "load", "dcl": "DOMContentLoaded", "fcp": "FCP",
+                       "response": "responseEnd"}
+            if pc.note:
+                pc_failed = True
+                res.reasons.append(f"성능 측정 불가: {pc.note}")
+            elif not pc.matched:
+                pc_failed = True
+                res.reasons.append(
+                    f"성능 예산 초과: {_METRIC.get(pc.metric, pc.metric)} "
+                    f"{pc.measured_ms:.0f}ms > 예산 {pc.budget_ms}ms")
+
         wc = res.write_check
         wc_failed = False
         if wc is not None:
@@ -642,7 +695,7 @@ class Runner:
         step_failed = any(s.status == "fail" for s in res.steps)
         if (hard_fail or step_failed or res.console_errors or res.page_errors
                 or res.http_failures or dc_failed or wc_failed or vis_failed
-                or rc_failed):
+                or rc_failed or pc_failed):
             res.status = FAIL
         elif vis_warn:
             res.status = WARN

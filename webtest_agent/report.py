@@ -18,7 +18,7 @@ KIND_LABEL = {"sweep_button": "버튼 스윕", "sweep_link": "링크 스윕",
               "data_check": "데이터 검증", "spec_check": "명세 검증",
               "write_check": "쓰기 검증", "visual_check": "시각 회귀",
               "responsive_check": "반응형", "a11y_check": "접근성",
-              "link_check": "링크 검사"}
+              "link_check": "링크 검사", "perf_check": "성능"}
 
 _A11Y_LABEL = {"img-alt": "대체 텍스트(alt) 없는 이미지", "input-label": "라벨 없는 입력 요소",
                "empty-name": "접근 가능한 이름 없는 버튼/링크", "html-lang": "html lang 속성 없음",
@@ -246,6 +246,10 @@ def _write_walkthrough(path, meta, results) -> None:
                 f"{v.width}px {'✅' if v.ok else '❌+' + str(v.overflow_px) + 'px'}"
                 for v in rc.viewports)
             outcome.append(f"반응형 {widths}")
+        pc = r.perf
+        if pc and not pc.note:
+            mark = "이내 ✅" if pc.matched else "초과 ❌"
+            outcome.append(f"{pc.metric} {pc.measured_ms:.0f}ms / 예산 {pc.budget_ms}ms → {mark}")
         outcome += r.reasons
         lines.append("")
         lines.append(f"→ **결과: {label}**" + (" — " + " / ".join(outcome) if outcome else ""))

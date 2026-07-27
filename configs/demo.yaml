@@ -187,6 +187,15 @@ responsive_checks:
     viewports: [375, 768, 1280]
     max_overflow_px: 2
 
+# 성능 예산 — 페이지 로드 지표를 임계와 비교(결정적). 타이밍 기반이라 예산은
+# 여유 있게 두고, 실패 판정 로직은 유닛 테스트로 결정적 검증한다.
+perf_checks:
+  - name: 메인화면-로드예산
+    description: 메인 화면이 예산(2초) 안에 load 완료되어야 한다
+    page: /
+    metric: load
+    budget_ms: 2000
+
 a11y:
   enabled: true   # 접근성 기본 점검 (간이·정보성)
 

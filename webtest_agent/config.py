@@ -221,6 +221,24 @@ class ResponsiveCheckSpec:
     max_overflow_px: int = 2      # 스크롤바 등 미세 오차 허용
 
 
+_PERF_METRICS = {"load", "dcl", "fcp", "response"}
+
+
+@dataclass
+class PerfCheckSpec:
+    """성능 예산 — 페이지 로드 지표가 예산(ms) 이내인지 검사(결정적).
+
+    metric: load(loadEventEnd 기본) | dcl(DOMContentLoaded) | fcp(First Contentful
+    Paint) | response(responseEnd).
+    """
+    name: str
+    page: str = "/"
+    description: str = ""
+    steps: list[Step] = field(default_factory=list)
+    metric: str = "load"
+    budget_ms: int = 3000
+
+
 @dataclass
 class NotifyConfig:
     """실행 후 웹훅 알림 (Slack Incoming Webhook 호환 JSON POST)."""
@@ -277,6 +295,7 @@ class AgentConfig:
     write_checks: list[WriteCheckSpec]
     visual_checks: list[VisualCheckSpec]
     responsive_checks: list[ResponsiveCheckSpec]
+    perf_checks: list[PerfCheckSpec]
     report: ReportConfig
     a11y: A11yConfig = field(default_factory=A11yConfig)
     link_check: LinkCheckConfig = field(default_factory=LinkCheckConfig)
@@ -505,6 +524,29 @@ def load_config(path: str | Path) -> AgentConfig:
             max_overflow_px=int(raw.get("max_overflow_px", 2)),
         ))
 
+    perfs: list[PerfCheckSpec] = []
+    for i, raw in enumerate(data.get("perf_checks") or []):
+        where = f"perf_checks[{i}]"
+        if not isinstance(raw, dict) or not raw.get("name"):
+            raise ConfigError(f"{where}: name이 필요합니다")
+        metric = str(raw.get("metric", "load"))
+        if metric not in _PERF_METRICS:
+            raise ConfigError(f"{where}: metric은 {sorted(_PERF_METRICS)} 중 하나여야 합니다")
+        if "budget_ms" not in raw:
+            raise ConfigError(f"{where}: budget_ms가 필요합니다 (예: 3000)")
+        budget = int(raw["budget_ms"])
+        if budget <= 0:
+            raise ConfigError(f"{where}: budget_ms는 1 이상이어야 합니다")
+        perfs.append(PerfCheckSpec(
+            name=str(raw["name"]),
+            page=str(raw.get("page", "/")),
+            description=str(raw.get("description", "")),
+            steps=[Step.from_dict(sd, f"{where}.steps[{j}]")
+                   for j, sd in enumerate(raw.get("steps") or [])],
+            metric=metric,
+            budget_ms=budget,
+        ))
+
     notify: NotifyConfig | None = None
     n_raw = data.get("notify")
     if n_raw:
@@ -563,6 +605,7 @@ def load_config(path: str | Path) -> AgentConfig:
         write_checks=writes,
         visual_checks=visuals,
         responsive_checks=responsives,
+        perf_checks=perfs,
         report=report,
         a11y=a11y,
         link_check=link_check,
