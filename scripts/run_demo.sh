@@ -54,6 +54,15 @@ for _ in $(seq 1 40); do
   sleep 0.5
 done
 
+# 시각 기준선이 없으면 먼저 승인 생성한다. 미승인 기준선은 경고로 처리되므로
+# (첫 실행 화면을 무비판 채택하지 않도록) 데모의 정상 all-pass를 보이려면
+# 사람이 승인하는 단계를 흉내 내 한 번 --update-baselines로 만들어 둔다.
+# 정상 모드에서만 하며, 버그 모드는 기준선 오염을 막기 위해 부트스트랩하지 않는다.
+if [[ "$BUG" == "0" && "$UPDATE_BASELINES" == "0" ]] && ! ls baselines/*.png >/dev/null 2>&1; then
+  echo "· 시각 기준선이 없어 승인 생성합니다 (--update-baselines 1회)"
+  python3 -m webtest_agent run -c "$CONFIG" --update-baselines >/dev/null 2>&1 || true
+fi
+
 status=0
 RUN_ARGS=(run -c "$CONFIG")
 if [[ "$ALLOW_WRITE" == "1" ]]; then

@@ -478,7 +478,10 @@ class Runner:
             baseline.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(current, baseline)
             result.matched = True
-            result.baseline_updated = self.update_baselines and not result.baseline_created
+            # 승인 기준은 '사람이 --update-baselines를 줬는가' 하나다.
+            # 줬으면 승인된 갱신(PASS), 안 줬는데 기준선이 없어 자동 생성한
+            # 경우는 미승인 기준선 → 판정에서 경고로 다룬다(_verdict 참조).
+            result.baseline_updated = self.update_baselines
             result.baseline_created = not self.update_baselines
             return result
 
@@ -585,7 +588,13 @@ class Runner:
         vis_failed = vis_warn = False
         if vis is not None:
             if vis.baseline_created:
-                res.reasons.append(f"시각 기준선 생성됨: {vis.baseline} (다음 실행부터 비교)")
+                # 사람이 승인하지 않은 기준선이다. 첫 실행 화면이 깨져 있어도
+                # 그것을 '정상'으로 못박지 않도록 통과가 아니라 경고로 둔다.
+                vis_warn = True
+                res.reasons.append(
+                    f"미승인 시각 기준선 생성됨: {vis.baseline} — 이 화면이 올바른지"
+                    " 사람이 확인하고 `run --update-baselines`로 승인하세요"
+                    " (다음 실행부터 이 기준선과 비교)")
             elif vis.baseline_updated:
                 res.reasons.append(f"시각 기준선 갱신됨(--update-baselines): {vis.baseline}")
             elif vis.note and "실패" in vis.note:

@@ -231,3 +231,35 @@ def test_favicon_console_error_is_dropped_by_monitor():
     monitor._on_console(_Msg("http://app/api/orders"))
     assert monitor.console_errors == [_Msg("x").text]
     assert monitor.console_error_urls == ["http://app/api/orders"]
+
+
+# ── 시각 기준선 최초 생성은 무승인이므로 통과가 아니라 경고 ──────────
+
+def test_unapproved_baseline_creation_is_warn_not_pass():
+    """기준선이 없어 첫 실행 화면을 자동 채택한 경우, 그 화면이 깨져 있어도
+    '정상'으로 못박으면 안 된다 → 통과가 아니라 경고."""
+    from types import SimpleNamespace
+    from webtest_agent.runner import Runner
+    from webtest_agent.models import ScenarioResult, VisualResult, WARN
+    r = Runner.__new__(Runner)
+    res = ScenarioResult(name="v", kind="visual_check", page="/")
+    res.visual = VisualResult(matched=True, baseline_created=True,
+                              baseline="baselines/v.png")
+    scenario = SimpleNamespace(kind="visual_check", visual_spec=None)
+    r._verdict(res, scenario, hard_fail=False)
+    assert res.status == WARN
+    assert any("미승인" in reason for reason in res.reasons)
+
+
+def test_approved_baseline_update_is_pass():
+    """--update-baselines로 승인 갱신한 경우는 통과."""
+    from types import SimpleNamespace
+    from webtest_agent.runner import Runner
+    from webtest_agent.models import ScenarioResult, VisualResult, PASS
+    r = Runner.__new__(Runner)
+    res = ScenarioResult(name="v", kind="visual_check", page="/")
+    res.visual = VisualResult(matched=True, baseline_updated=True,
+                              baseline="baselines/v.png")
+    scenario = SimpleNamespace(kind="visual_check", visual_spec=None)
+    r._verdict(res, scenario, hard_fail=False)
+    assert res.status == PASS
