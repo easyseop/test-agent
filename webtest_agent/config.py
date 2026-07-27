@@ -229,6 +229,20 @@ class NotifyConfig:
 
 
 @dataclass
+class LinkCheckConfig:
+    """깨진 링크 검사 — 크롤링으로 발견한 링크의 HTTP 상태를 전수 점검.
+
+    include_external=False면 같은 출처(same-origin) 링크만 본다(외부 사이트의
+    일시적 오류를 우리 앱 실패로 보지 않도록). severity로 판정 게이팅.
+    """
+    enabled: bool = False
+    include_external: bool = False
+    severity: str = "fail"        # info | warn | fail
+    timeout_ms: int = 10000
+    ignore_patterns: list[str] = field(default_factory=list)
+
+
+@dataclass
 class A11yConfig:
     """접근성 기본 점검(간이·내장) — 크롤링한 페이지 대상.
 
@@ -265,6 +279,7 @@ class AgentConfig:
     responsive_checks: list[ResponsiveCheckSpec]
     report: ReportConfig
     a11y: A11yConfig = field(default_factory=A11yConfig)
+    link_check: LinkCheckConfig = field(default_factory=LinkCheckConfig)
     auth: AuthConfig | None = None
     notify: NotifyConfig | None = None
     baselines_dir: str = "baselines"
@@ -510,6 +525,18 @@ def load_config(path: str | Path) -> AgentConfig:
     a11y = A11yConfig(enabled=bool(a11y_raw.get("enabled", False)),
                       severity=a11y_severity)
 
+    lc_raw = _sub(data, "link_check")
+    lc_severity = str(lc_raw.get("severity", "fail"))
+    if lc_severity not in ("info", "warn", "fail"):
+        raise ConfigError("link_check.severity는 info, warn, fail 중 하나여야 합니다")
+    link_check = LinkCheckConfig(
+        enabled=bool(lc_raw.get("enabled", False)),
+        include_external=bool(lc_raw.get("include_external", False)),
+        severity=lc_severity,
+        timeout_ms=int(lc_raw.get("timeout_ms", 10000)),
+        ignore_patterns=_regex_list(lc_raw.get("ignore_patterns"), "link_check.ignore_patterns"),
+    )
+
     auth: AuthConfig | None = None
     a_raw = data.get("auth")
     if a_raw:
@@ -538,6 +565,7 @@ def load_config(path: str | Path) -> AgentConfig:
         responsive_checks=responsives,
         report=report,
         a11y=a11y,
+        link_check=link_check,
         auth=auth,
         notify=notify,
         baselines_dir=str(data.get("baselines_dir", "baselines")),

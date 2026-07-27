@@ -37,6 +37,7 @@ th{background:#f9fafb}
   <h1>주문 관리 대시보드</h1>
   <nav>
     <a href="/about">소개</a>
+    {% if bug %} · <a href="/help">도움말</a>{% endif %}{# BUG-6: 존재하지 않는 경로(404) 링크 #}
     {% if auth_user %} · <span>{{ auth_user }}</span> <a id="logout-link" href="/logout">로그아웃</a>{% endif %}
   </nav>
 </header>

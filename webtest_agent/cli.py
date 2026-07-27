@@ -99,6 +99,40 @@ _A11Y_LABEL = {
 }
 
 
+def _link_check_scenario(session, cfg, discovery):
+    """크롤링으로 발견한 링크의 HTTP 상태를 전수 점검해 판정 시나리오로 만든다."""
+    from .links import collect_links, probe_links
+    from .models import FAIL, PASS, WARN, ScenarioResult
+
+    pages = [{"url": p.url, "path": p.path, "elements": p.elements} for p in discovery.pages]
+    urls = collect_links(pages, cfg.target.base_url, cfg.link_check.include_external,
+                         cfg.link_check.ignore_patterns)
+    res = ScenarioResult(name="깨진 링크 검사", kind="link_check", page="(크롤링 전체)",
+                         description=f"발견한 링크 {len(urls)}개의 HTTP 상태 전수 점검")
+    if not urls:
+        res.status = PASS
+        res.reasons.append("검사할 링크가 없습니다")
+        return res
+
+    ctx, _page, _mon = session.new_context(cfg.target.base_url)
+    try:
+        broken = probe_links(ctx.request, urls, cfg.link_check.timeout_ms)
+    finally:
+        ctx.close()
+
+    if not broken:
+        res.status = PASS
+        res.reasons.append(f"링크 {len(urls)}개 모두 정상(<400)")
+        return res
+
+    res.status = FAIL if cfg.link_check.severity == "fail" else WARN
+    res.reasons.append(f"깨진 링크 {len(broken)}/{len(urls)}개")
+    for b in broken[:10]:
+        status = b["status"] if b["status"] is not None else f"연결 실패: {b['detail']}"
+        res.reasons.append(f"  {b['url']} → {status}")
+    return res
+
+
 def _a11y_scenario_result(pages, severity: str):
     """크롤링한 페이지의 접근성 이슈를 하나의 판정 시나리오로 합친다.
 
@@ -345,6 +379,16 @@ def cmd_run(args: argparse.Namespace) -> int:
             if cfg.a11y.severity != "info":
                 a11y_scenario = _a11y_scenario_result(discovery.pages, cfg.a11y.severity)
 
+        link_scenario = None
+        if not infra_error and cfg.link_check.enabled and discovery.pages:
+            print("   깨진 링크 검사 중...")
+            try:
+                link_scenario = _link_check_scenario(session, cfg, discovery)
+                print(f"   {link_scenario.reasons[0]}")
+            except Exception as err:
+                link_scenario = None
+                print(f"   링크 검사 생략(오류): {_short_exc(err)}")
+
         scenarios = []
         if not infra_error:
             scenarios = build_data_checks(cfg) + build_spec_checks(cfg)
@@ -372,8 +416,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                   f" + 반응형 {len(cfg.responsive_checks)}"
                   f" + 쓰기 검증 {len(write_scenarios)} + 스윕 {len(scenarios) - fixed})")
             try:
-                # a11y 게이트(warn/fail)도 실행 대상이므로 '0개' 판정에서 함께 센다.
-                _require_scenarios(scenarios or ([a11y_scenario] if a11y_scenario else []))
+                # a11y·링크 게이트도 실행 대상이므로 '0개' 판정에서 함께 센다.
+                gates = [g for g in (a11y_scenario, link_scenario) if g]
+                _require_scenarios(scenarios or gates)
             except RunInfrastructureError as err:
                 infra_error = str(err)
 
@@ -419,6 +464,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
             # 입력 순서로 정렬해 결정적 리포트 순서 보장
             results = order_results(collected)
+            if link_scenario is not None:
+                results.append(link_scenario)   # 깨진 링크 검사를 판정에 포함
             if a11y_scenario is not None:
                 results.append(a11y_scenario)   # 접근성 게이트(warn/fail)를 판정에 포함
             if not infra_error:

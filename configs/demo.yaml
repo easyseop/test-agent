@@ -190,6 +190,13 @@ responsive_checks:
 a11y:
   enabled: true   # 접근성 기본 점검 (간이·정보성)
 
+# 깨진 링크 검사 — 크롤링으로 발견한 같은 출처 링크의 HTTP 상태 전수 점검.
+# 정상 모드는 전부 정상, 버그 모드(DEMO_BUG=1)는 /help(404) 링크를 검출.
+link_check:
+  enabled: true
+  severity: fail
+  ignore_patterns: ["/logout", "/export\\.csv"]   # 세션 종료·다운로드는 probe 제외
+
 # notify:                              # (선택) 실행 후 웹훅 알림 — Slack Incoming Webhook 호환
 #   webhook_url: "${WEBHOOK_URL}"      # 비밀 URL은 환경변수로
 #   on: fail                           # fail(기본: 실패 있을 때만) | always

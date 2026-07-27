@@ -49,7 +49,7 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 ```bash
 ./scripts/run_demo.sh          # 읽기 전용 기본 모드 → 19개 통과, 위험 동작 차단 기록
 ./scripts/run_demo.sh --write  # 시드 DB 주문 등록 검증을 명시적으로 승인
-./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 5건 검출 (종료코드 1이 정상)
+./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 6건 검출 (종료코드 1이 정상)
 ./scripts/run_demo.sh --auth   # 로그인 모드 → 10개 통과 + 인증 상태 자동 삭제
 ./scripts/run_demo.sh --load-error  # 첫 화면 로드 오류 1건 검출 (종료코드 1이 정상)
 ./scripts/run_demo.sh --deadline  # 전체 제한 초과 → 실행 불가·종료코드 2
@@ -62,6 +62,7 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 ✗ 날짜범위-6월       — UI↔DB 불일치: 화면 64건 vs DB 67건 (화면에 누락 3건)    ← 경계일(6/30) 누락
 ✗ 버튼점검 요약 보기 — 페이지 예외: showSummry is not defined                  ← JS 오타
 ✗ 메인화면-반응형    — 가로 오버플로: 375px(+875)에서 화면이 옆으로 넘칩니다     ← 고정폭 배너
+✗ 깨진 링크 검사     — 깨진 링크 1/4개: http://…/help → 404                     ← 없는 경로 링크
 ```
 
 수동 실행:
