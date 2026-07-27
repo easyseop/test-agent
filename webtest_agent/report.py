@@ -36,6 +36,8 @@ def summarize(results: list[ScenarioResult]) -> dict:
         "pass": sum(1 for r in results if r.status == PASS),
         "warn": sum(1 for r in results if r.status == WARN),
         "fail": sum(1 for r in results if r.status == FAIL),
+        # 재실행에서 통과해 경고로 낮춘 실패 — 통과로 간주하지 않는다
+        "flaky": sum(1 for r in results if r.flaky),
     }
 
 
@@ -66,7 +68,9 @@ def _write_json(path, meta, summary, results, blocked, discovery_pages, diff) ->
         "scenarios": [r.to_dict() for r in results],
         "discovery_pages": discovery_pages,
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Decimal(쓰기 검증 수치)은 JSON 기본 타입이 아니므로 문자열로 직렬화한다
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                    encoding="utf-8")
 
 
 def _diff_lines(diff: dict | None) -> list[str]:

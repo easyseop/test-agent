@@ -8,13 +8,13 @@ import time
 from pathlib import Path
 
 from .browser import BrowserSession, save_screenshot
-from .config import AgentConfig, Step
+from .config import MASK, AgentConfig, Step
 from .datacheck import (compare, extract_table, parse_count, run_api_query,
                         run_query, run_scalar_query)
 from .models import (FAIL, PASS, WARN, DataCheckResult, ScenarioResult,
                      StepResult, VisualResult, WriteCheckResult)
 from .scenarios import Scenario, slugify
-from .safety import find_hard_block
+from .safety import find_destructive, find_hard_block
 from .visual import compare_images
 
 
@@ -31,20 +31,29 @@ def _short(err: Exception) -> str:
     return (text[0] if text else err.__class__.__name__)[:300]
 
 
+def _scrub(text: str, step: Step | None) -> str:
+    """오류 메시지에 비밀값이 섞여 나오는 경우를 대비한 최종 방어."""
+    if step is None or not step.secret or not step.value:
+        return text
+    return text.replace(step.value, MASK)
+
+
 def describe_step(step: Step) -> str:
+    """스텝 설명 — 리포트·절차서에 그대로 실리므로 비밀값은 마스킹된 값을 쓴다."""
     sel = f"'{step.selector}'"
+    val = step.log_value
     return {
-        "goto": f"{step.value} 페이지로 이동한다",
+        "goto": f"{val} 페이지로 이동한다",
         "click": f"{sel} 요소를 클릭한다",
-        "fill": f"{sel}에 '{step.value}'를 입력한다",
-        "select": f"{sel}에서 '{step.value}'를 선택한다",
+        "fill": f"{sel}에 '{val}'를 입력한다",
+        "select": f"{sel}에서 '{val}'를 선택한다",
         "check": f"{sel} 체크박스를 선택한다",
-        "press": f"{sel}에서 {step.value} 키를 누른다",
+        "press": f"{sel}에서 {val} 키를 누른다",
         "wait_for": f"{sel} 요소가 나타날 때까지 기다린다",
-        "wait_ms": f"{step.value}ms 동안 기다린다",
+        "wait_ms": f"{val}ms 동안 기다린다",
         "assert_visible": f"{sel} 요소가 화면에 보이는지 확인한다",
-        "assert_text": f"{sel} 요소에 '{step.value}' 텍스트가 있는지 확인한다",
-        "assert_url": f"주소(URL)가 '{step.value}' 패턴과 일치하는지 확인한다",
+        "assert_text": f"{sel} 요소에 '{val}' 텍스트가 있는지 확인한다",
+        "assert_url": f"주소(URL)가 '{val}' 패턴과 일치하는지 확인한다",
     }[step.action]
 
 
@@ -146,6 +155,22 @@ class Runner:
                 res.duration_ms = int((time.monotonic() - started) * 1000)
                 self._verdict(res, scenario, hard_fail=True)
                 return res
+        elif scenario.kind != "write_check":
+            # 사람이 적은 스텝이라도 되돌릴 수 없는 동작은 승인 없이 실행하지 않는다.
+            # (승인받은 write_check만 예외 — 위 kind 분기에서 제외됨)
+            hit = next(
+                (h for step in scenario.steps if step.action == "click"
+                 and (h := find_destructive(step.selector))),
+                None,
+            )
+            if hit:
+                res.reasons.append(
+                    f"안전 차단: 파괴적 동작으로 보이는 클릭이 있습니다 ({hit}) — "
+                    "의도한 상태 변경이면 write_checks로 옮기고 --allow-write-checks로 승인하세요"
+                )
+                res.duration_ms = int((time.monotonic() - started) * 1000)
+                self._verdict(res, scenario, hard_fail=True)
+                return res
 
         slug = f"{index:02d}_{slugify(scenario.name)}" + (f"_{suffix}" if suffix else "")
         shots_dir = self.run_dir / "screenshots" / slug
@@ -186,7 +211,7 @@ class Runner:
                     raise ScenarioTimeout
                 page.set_default_timeout(self._bounded_timeout(5000))
                 sr = StepResult(index=i, action=step.action, selector=step.selector,
-                                value=step.value, description=describe_step(step))
+                                value=step.log_value, description=describe_step(step))
                 t0 = time.monotonic()
                 try:
                     self._exec_step(page, step)
@@ -196,7 +221,7 @@ class Runner:
                     raise
                 except Exception as err:
                     sr.status = "fail"
-                    sr.error = _short(err)
+                    sr.error = _scrub(_short(err), step)
                     sr.screenshot = self._rel(self._shot(page, shots_dir / f"step{i:02d}_fail.jpg"))
                     res.steps.append(sr)
                     res.reasons.append(f"스텝 {i} 실패 — {sr.description}: {sr.error}")
@@ -343,11 +368,13 @@ class Runner:
         if not pag:
             return headers, rows
         for _ in range(pag.max_pages - 1):
+            # 순회도 전체 실행 제한 시간에 묶는다 (넘기면 RunDeadlineExceeded)
+            page.set_default_timeout(self._bounded_timeout(5000))
             nxt = page.query_selector(pag.next_selector)
             if nxt is None or not nxt.is_visible() or nxt.is_disabled():
                 break
             nxt.click()
-            page.wait_for_timeout(self.cfg.target.settle_ms)
+            self._wait(page, self.cfg.target.settle_ms)
             _, more = extract_table(page, spec.ui_table.selector)
             if not more:
                 break
@@ -395,6 +422,8 @@ class Runner:
         spec = scenario.spec
         try:
             headers, rows = self._extract_all_pages(page, spec)
+        except RunDeadlineExceeded:
+            raise   # 제한 시간 초과는 검증 실패가 아니라 실행 불가로 올린다
         except Exception as err:
             return DataCheckResult(note=f"UI 테이블 추출 실패: {_short(err)}")
         try:

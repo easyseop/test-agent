@@ -279,8 +279,12 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"웹훅 알림 {'전송 실패: ' + err if err else '전송 완료'}")
         return 2
 
-    meta.status = "failed" if any(r.status == FAIL for r in results) else "passed"
-    diff = diff_for(run_dir.parent, run_dir, {r.name: r.status for r in results})
+    # 간헐(flaky) 강등은 '재현이 불안정한 제품 결함'이지 통과가 아니다.
+    # 경고로 낮춰 증적을 구분하되, 실행 상태와 종료코드에서는 실패로 남긴다.
+    unresolved = any(r.status == FAIL or r.flaky for r in results)
+    meta.status = "failed" if unresolved else "passed"
+    diff = diff_for(run_dir.parent, run_dir, {r.name: r.status for r in results},
+                    identity=(cfg.target.base_url, cfg.config_path))
     summary = write_reports(run_dir, meta, results, blocked,
                             [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y}
                              for p in discovery.pages],
@@ -289,6 +293,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     print("─" * 60)
     print(f"실행 완료: 통과 {summary['pass']} · 경고 {summary['warn']} · 실패 {summary['fail']}"
           f" (총 {summary['total']}, {meta.duration_ms / 1000:.1f}s)")
+    if summary["flaky"]:
+        print(f"간헐(flaky) 의심 {summary['flaky']}건 — 재실행에서 통과했으나 통과로 처리하지 않습니다")
     if diff:
         parts = []
         for key, label in (("new_failures", "신규 실패"), ("fixed", "복구"),
@@ -303,12 +309,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"리포트: {run_dir}/report.html (스크린샷 내장 단일 파일)")
     print(f"절차서: {run_dir}/walkthrough.md · 비디오: {run_dir}/videos/ · 트레이스: {run_dir}/traces/")
 
-    if cfg.notify and (cfg.notify.on == "always" or summary["fail"]):
+    if cfg.notify and (cfg.notify.on == "always" or unresolved):
         err = send_webhook(cfg.notify.webhook_url,
                            build_payload(meta, summary, results, str(run_dir)))
         print(f"웹훅 알림 {'전송 실패: ' + err if err else '전송 완료'}")
 
-    return 1 if summary["fail"] else 0
+    return 1 if unresolved else 0
 
 
 def cmd_discover(args: argparse.Namespace) -> int:

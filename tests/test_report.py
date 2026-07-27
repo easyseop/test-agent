@@ -43,7 +43,7 @@ def test_write_reports(tmp_path):
             "fixed": [], "still_failing": [], "added": [], "removed": []}
     summary = write_reports(tmp_path, meta, _sample_results(), [], [], diff=diff)
 
-    assert summary == {"total": 3, "pass": 1, "warn": 1, "fail": 1}
+    assert summary == {"total": 3, "pass": 1, "warn": 1, "fail": 1, "flaky": 0}
     for name in ("report.json", "report.md", "report.html", "walkthrough.md"):
         assert (tmp_path / name).exists(), name
 

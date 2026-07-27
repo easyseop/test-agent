@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from decimal import Decimal
 
 PASS, WARN, FAIL = "pass", "warn", "fail"
 STATUS_LABEL = {PASS: "통과", WARN: "경고", FAIL: "실패"}
@@ -44,9 +45,11 @@ class DataCheckResult:
 
 @dataclass
 class WriteCheckResult:
-    pre: float = 0
-    post: float = 0
-    delta: float = 0
+    # binary float를 쓰면 큰 정수·금액 소수에서 변화량이 어긋나므로 Decimal로 다룬다.
+    # JSON 출력에서는 문자열로 직렬화된다 (report._write_json의 default=str).
+    pre: Decimal = Decimal(0)
+    post: Decimal = Decimal(0)
+    delta: Decimal = Decimal(0)
     expected_delta: int = 0
     matched: bool = False
     note: str = ""

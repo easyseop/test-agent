@@ -44,10 +44,10 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 ## 빠른 시작 (동봉 데모앱)
 
 ```bash
-./scripts/run_demo.sh          # 읽기 전용 기본 모드 → 19개 통과, 위험 동작 4개 차단
-./scripts/run_demo.sh --write  # 시드 DB 주문 등록 검증을 명시적으로 승인 → 20개 통과
+./scripts/run_demo.sh          # 읽기 전용 기본 모드 → 18개 통과, 위험 동작 차단 기록
+./scripts/run_demo.sh --write  # 시드 DB 주문 등록 검증을 명시적으로 승인
 ./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 4건 검출 (종료코드 1이 정상)
-./scripts/run_demo.sh --auth   # 로그인 모드 → 11개 통과 + 인증 상태 자동 삭제
+./scripts/run_demo.sh --auth   # 로그인 모드 → 10개 통과 + 인증 상태 자동 삭제
 ./scripts/run_demo.sh --load-error  # 첫 화면 로드 오류 1건 검출 (종료코드 1이 정상)
 ./scripts/run_demo.sh --deadline  # 전체 제한 초과 → 실행 불가·종료코드 2
 ```
@@ -55,7 +55,7 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 버그 주입 모드(`DEMO_BUG=1`)의 검출 예시:
 
 ```
-✗ 상태필터-shipped   — UI↔DB 불일치: 화면 75건 vs DB 36건 (화면에 초과 39건)   ← delivered가 섞여 나옴
+✗ 상태필터-shipped   — UI↔DB 불일치: 화면 76건 vs DB 37건 (화면에 초과 39건)   ← delivered가 섞여 나옴
 ✗ 날짜범위-6월       — UI↔DB 불일치: 화면 64건 vs DB 67건 (화면에 누락 3건)    ← 경계일(6/30) 누락
 ✗ 버튼점검 요약 보기 — 페이지 예외: showSummry is not defined                  ← JS 오타
 ```
@@ -166,8 +166,10 @@ spec_checks:
 ## 현재 한계
 
 - API 오라클(`query.api`)은 표시 계층 검증 — UI와 API가 같은 백엔드 로직을 공유하면 백엔드 버그는 못 잡습니다 (백엔드까지 보려면 SQL 오라클)
-- 기본 재시도 없음(결정성 우선) — 간헐 실패는 `wait_for` 보강으로 예방하고, 필요 시 `target.flaky_recheck: true`로 재실행 기반 flaky 표시 사용
-- 마스킹은 스크린샷에만 적용 (비디오·트레이스 공유 시 주의)
+- 기본 재시도 없음(결정성 우선) — 간헐 실패는 `wait_for` 보강으로 예방하고, 필요 시 `target.flaky_recheck: true`로 재실행 기반 flaky 표시 사용. **flaky로 표시돼도 통과가 아닙니다** (종료코드 1 유지)
+- 값 마스킹은 **스텝 기록·스크린샷**에 적용 — `${환경변수}`로 넣은 값과 비밀번호·토큰 입력은 리포트에 `***`로 남지만, **비디오·트레이스에는 입력 과정이 그대로 녹화**됩니다 (공유 범위 주의)
+- 위험 동작 차단 목록은 단어 매칭 최후 안전망입니다 — 목록에 없는 어휘(사내 용어 등)는 막히지 않으므로 `avoid_patterns`로 보강하세요
+- 정답원 SQL 가드는 보수적 문자열 검사입니다 — 함수 호출까지 완전히 막지 못하므로 **DB 계정 자체를 read-only로 두는 것이 본 방어선**입니다
 - 접근성 점검은 간이 내장 검사 (axe 수준 아님 — 정보성)
 - 시각 회귀 기준선(`baselines/`)은 실행 환경(폰트·렌더링)에 종속 — 같은 환경에서 생성·비교하고, 팀 공유 시 CI 등 단일 환경에서 생성할 것
 

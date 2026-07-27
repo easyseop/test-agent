@@ -18,6 +18,16 @@ class ConfigError(ValueError):
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
+# 값이 증거(리포트·절차서)에 남으면 안 되는 입력을 가리키는 selector 힌트.
+# 환경변수 치환 여부와 무관하게 이 셀렉터에 입력한 값은 기록에서 가린다.
+# 앞뒤가 알파벳이면 다른 단어의 일부다 (#compass의 'pass', #spinner의 'pin' 등).
+_SECRET_SELECTOR_RX = re.compile(
+    r"(?<![A-Za-z])(pass(word|wd)?|secret|token|api[-_]?key|otp|pin|credential)"
+    r"(?![A-Za-z])",
+    re.IGNORECASE,
+)
+MASK = "***"
+
 
 def _expand_env(value: str, where: str) -> str:
     """'${VAR}' 형태를 환경변수로 치환 — 비밀번호·DB 접속정보의 평문 저장 방지용."""
@@ -27,6 +37,17 @@ def _expand_env(value: str, where: str) -> str:
             raise ConfigError(f"{where}: 환경변수 {name}가 설정되어 있지 않습니다 (${{{name}}} 치환 실패)")
         return os.environ[name]
     return _ENV_RX.sub(repl, value)
+
+
+def _is_secret_step(raw_value: str | None, selector: str | None) -> bool:
+    """이 스텝의 값을 증거에 남기면 안 되는가.
+
+    ① `${VAR}` 치환이 일어났다 — 설정에 평문으로 두지 않으려 한 값이므로 비밀로 본다.
+    ② selector가 비밀번호·토큰 입력을 가리킨다 — 치환을 쓰지 않았어도 가린다.
+    """
+    if raw_value is not None and _ENV_RX.search(raw_value):
+        return True
+    return bool(selector and _SECRET_SELECTOR_RX.search(selector))
 
 
 STEP_ACTIONS = {
@@ -43,6 +64,14 @@ class Step:
     action: str
     selector: str | None = None
     value: str | None = None
+    secret: bool = False        # True면 값을 리포트·절차서에 남기지 않는다
+
+    @property
+    def log_value(self) -> str | None:
+        """증거에 기록해도 되는 값 (비밀이면 마스킹)."""
+        if self.value is None:
+            return None
+        return MASK if self.secret else self.value
 
     @classmethod
     def from_dict(cls, d: dict, where: str) -> "Step":
@@ -57,9 +86,11 @@ class Step:
             raise ConfigError(f"{where}: action '{action}'에는 selector가 필요합니다")
         if action in _NEEDS_VALUE and value is None:
             raise ConfigError(f"{where}: action '{action}'에는 value가 필요합니다")
-        if value is not None:
-            value = _expand_env(str(value), where)
-        return cls(action=action, selector=selector, value=value)
+        raw_value = None if value is None else str(value)
+        secret = _is_secret_step(raw_value, selector)
+        if raw_value is not None:
+            value = _expand_env(raw_value, where)
+        return cls(action=action, selector=selector, value=value, secret=secret)
 
 
 @dataclass

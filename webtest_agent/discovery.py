@@ -31,7 +31,13 @@ JS_INVENTORY = """() => {
     return parts.join(' > ');
   }
   const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-  const info = (el) => ({ selector: cssPath(el), text: ((el.innerText || el.value || '') + '').trim().slice(0, 80) });
+  // 아이콘 전용 버튼은 innerText가 비어 있다. aria-label/title/alt까지 텍스트로 모아야
+  // 위험 동작(삭제 등) 차단 판정이 그런 버튼에도 적용된다.
+  const label = (el) => [
+    el.innerText, el.value, el.getAttribute('aria-label'),
+    el.getAttribute('title'), (el.querySelector('img') || {}).alt,
+  ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const info = (el) => ({ selector: cssPath(el), text: label(el) });
   return {
     title: document.title,
     buttons: Array.from(document.querySelectorAll('button, input[type=button], input[type=submit], [role=button]'))

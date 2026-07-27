@@ -18,7 +18,13 @@ _NUMERIC = re.compile(r"-?\d+(\.\d+)?")
 
 
 def normalize_cell(value) -> str:
-    """표현 차이 정규화: 공백 압축, 통화 표기 제거 후 숫자로 해석되면 수치 표준형."""
+    """표현 차이 정규화: 공백 압축, 통화 표기 제거 후 숫자로 해석되면 수치 표준형.
+
+    DB의 NULL은 화면에서 빈 칸으로 그려지는 것이 정상이므로 빈 문자열과 같게 본다
+    (`str(None)` = 'None'을 그대로 쓰면 nullable 컬럼이 전부 불일치가 된다).
+    """
+    if value is None:
+        return ""
     s = _WS.sub(" ", str(value).strip())
     candidate = _NUM_STRIP.sub("", s)
     if _NUMERIC.fullmatch(candidate):
@@ -33,6 +39,34 @@ def normalize_cell(value) -> str:
         # float/Decimal 연산 없이 문자열만 다뤄 자릿수 제한 없이 정확히 보존한다.
         return f"-{canonical}" if negative else canonical
     return s
+
+
+_READ_ONLY_SESSION_SQL = {
+    "postgres": "SET TRANSACTION READ ONLY",
+    "mysql": "SET SESSION TRANSACTION READ ONLY",
+    "mariadb": "SET SESSION TRANSACTION READ ONLY",
+}
+
+
+def _enforce_session_read_only(conn, db_url: str, text) -> None:
+    """SQL 문자열 가드로는 함수 호출까지 막을 수 없으므로 세션 자체를 읽기 전용으로 만든다.
+
+    지원하지 않는 엔진이면 조용히 넘어간다 — 이 장치는 DB 계정 권한을 대신하지
+    않는 추가 방어선이며, 정답원 계정은 별도로 read-only여야 한다.
+    """
+    driver = db_url.split("://", 1)[0].split("+", 1)[0].lower()
+    statement = next(
+        (sql for prefix, sql in _READ_ONLY_SESSION_SQL.items() if driver.startswith(prefix)),
+        None,
+    )
+    if statement is None:
+        return
+    try:
+        conn.execute(text(statement))
+    except Exception as err:
+        raise ValueError(
+            f"정답원 연결을 읽기 전용 세션으로 설정하지 못했습니다 ({driver}): {err}"
+        ) from err
 
 
 def run_query(db_url: str, sql: str) -> tuple[list[str], list[tuple]]:
@@ -65,6 +99,7 @@ def run_query(db_url: str, sql: str) -> tuple[list[str], list[tuple]]:
         engine = create_engine(db_url)
         try:
             with engine.connect() as conn:
+                _enforce_session_read_only(conn, db_url, text)
                 result = conn.execute(text(sql))
                 cols = list(result.keys())
                 rows = [tuple(r) for r in result.fetchall()]
@@ -109,14 +144,18 @@ def run_api_query(api: ApiSpec, base_url: str) -> tuple[list[str], list[tuple]]:
     return list(api.columns), extract_api_rows(data, api.rows_path, api.columns)
 
 
-def run_scalar_query(db_url: str, sql: str) -> float:
-    """단일 수치를 반환하는 쿼리 실행 (쓰기 검증의 사전/사후 측정용)."""
+def run_scalar_query(db_url: str, sql: str) -> Decimal:
+    """단일 수치를 반환하는 쿼리 실행 (쓰기 검증의 사전/사후 측정용).
+
+    binary float를 쓰면 큰 정수(2^53 초과)나 금액 소수에서 변화량이 어긋나므로
+    Decimal로 다룬다 — 표 비교가 문자열 정규화를 쓰는 것과 같은 이유다.
+    """
     cols, rows = run_query(db_url, sql)
     if not rows or not rows[0]:
         raise ValueError("쿼리 결과가 비어 있습니다 (단일 수치가 필요)")
     try:
-        return float(rows[0][0])
-    except (TypeError, ValueError) as err:
+        return Decimal(str(rows[0][0]))
+    except (TypeError, ValueError, ArithmeticError) as err:
         raise ValueError(f"쿼리 첫 값이 수치가 아닙니다: {rows[0][0]!r}") from err
 
 
@@ -171,6 +210,15 @@ def compare(
         missing_cols = [c for c in columns if c not in headers]
         if missing_cols:
             result.note = f"UI 헤더에 없는 컬럼: {missing_cols} (실제 헤더: {headers})"
+            return result
+        # 같은 헤더명이 둘 이상이면 headers.index()가 조용히 첫 컬럼만 고른다 —
+        # 의도와 다른 컬럼을 비교하고 통과할 수 있으므로 검증 불가로 처리한다.
+        duplicated = sorted({c for c in columns if headers.count(c) > 1})
+        if duplicated:
+            result.note = (
+                f"UI 헤더에 같은 이름이 여러 번 있습니다: {duplicated} (실제 헤더: {headers}). "
+                "어느 컬럼을 비교할지 확정할 수 없으니 표의 헤더를 구분하거나 columns를 조정하세요."
+            )
             return result
         indices = [headers.index(c) for c in columns]
         result.columns = list(columns)
