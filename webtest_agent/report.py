@@ -59,7 +59,59 @@ def write_reports(
     _write_markdown(run_dir / "report.md", meta, summary, results, blocked, diff)
     _write_walkthrough(run_dir / "walkthrough.md", meta, results)
     _write_html(run_dir / "report.html", run_dir, meta, summary, results, blocked, diff, discovery_pages)
+    _write_junit(run_dir / "report.xml", meta, summary, results)
     return summary
+
+
+def _junit_xml(meta: RunMeta, summary: dict, results: list[ScenarioResult]) -> str:
+    """JUnit XML — CI 시스템이 테스트별 결과를 표시하는 표준 포맷.
+
+    시나리오=testcase. 실패→<failure>. 실행 불가(infra_error)는 전체를 <error>로.
+    경고는 통과로 두되 사유를 <system-out>에 남긴다(종료코드가 경고를 실패로
+    치지 않는 것과 일관).
+    """
+    def esc(text: str) -> str:
+        return html_mod.escape(str(text), quote=True)
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>']
+    suite_name = esc(meta.title or "webtest-agent")
+    time_s = f"{meta.duration_ms / 1000:.3f}"
+
+    if meta.status == "infra_error":
+        # 판정 불가 — 개별 테스트가 아니라 스위트 수준 오류로 표기한다.
+        lines.append(
+            f'<testsuite name="{suite_name}" tests="1" failures="0" errors="1" '
+            f'skipped="0" time="{time_s}">')
+        lines.append('  <testcase name="실행 불가(infra_error)" classname="webtest_agent">')
+        lines.append(f'    <error message="{esc(meta.error or "판정 불가")}"></error>')
+        lines.append('  </testcase>')
+        lines.append('</testsuite>')
+        return "\n".join(lines) + "\n"
+
+    failures = summary["fail"]
+    lines.append(
+        f'<testsuite name="{suite_name}" tests="{summary["total"]}" '
+        f'failures="{failures}" errors="0" skipped="0" time="{time_s}">')
+    for r in results:
+        case_time = f"{r.duration_ms / 1000:.3f}"
+        name = esc(r.name)
+        kind = esc(KIND_LABEL.get(r.kind, r.kind))
+        lines.append(
+            f'  <testcase name="{name}" classname="webtest_agent.{kind}" time="{case_time}">')
+        if r.status == FAIL:
+            reason = esc(r.reasons[0] if r.reasons else "실패")
+            body = esc("\n".join(r.reasons))
+            lines.append(f'    <failure message="{reason}">{body}</failure>')
+        elif r.status == WARN:
+            note = esc("\n".join(r.reasons) or "경고")
+            lines.append(f'    <system-out>[경고] {note}</system-out>')
+        lines.append('  </testcase>')
+    lines.append('</testsuite>')
+    return "\n".join(lines) + "\n"
+
+
+def _write_junit(path, meta, summary, results) -> None:
+    path.write_text(_junit_xml(meta, summary, results), encoding="utf-8")
 
 
 # ── JSON ──────────────────────────────────────────────────────────

@@ -80,6 +80,7 @@ python3 -m webtest_agent discover -c configs/demo.yaml   # 크롤링·인벤토�
 | `report.html` | **스크린샷 내장 단일 파일 리포트** — 이 파일 하나만 공유해도 됨 |
 | `walkthrough.md` | 단계별 캡처+설명 **절차서** — 통과=기능 매뉴얼/인수인계서, 실패=버그 재현 절차서. 이미지가 상대 경로라 폴더째 옵시디언 볼트에 넣으면 렌더링됨 |
 | `report.md` / `report.json` | 텍스트 요약 / 기계 판독용 전체 결과(실행 환경 메타데이터 포함) |
+| `report.xml` | **JUnit XML** — CI(Jenkins·GitLab·GitHub Actions 등)가 테스트별 결과를 표시 |
 | `videos/*.webm` | 시나리오별 화면 녹화 |
 | `traces/*.zip` | Playwright Trace — [trace.playwright.dev](https://trace.playwright.dev)에 드래그하면 액션별 DOM·네트워크·콘솔 타임라인을 시간여행하며 분석 가능 |
 | `discovery.json` | 페이지·요소 인벤토리 |
