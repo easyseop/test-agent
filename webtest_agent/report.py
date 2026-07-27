@@ -9,6 +9,10 @@ from pathlib import Path
 
 from .models import FAIL, PASS, WARN, BlockedElement, RunMeta, ScenarioResult
 
+# report.json 계약 버전. Runner·Lab 어댑터·Console이 함께 읽으므로, 구조를
+# 바꿀 때 올린다. 소비자는 알 수 없는(더 높은) 버전을 안전하게(경고) 처리한다.
+REPORT_SCHEMA_VERSION = 1
+
 BADGE = {PASS: ("통과", "#16a34a"), WARN: ("경고", "#d97706"), FAIL: ("실패", "#dc2626")}
 KIND_LABEL = {"sweep_button": "버튼 스윕", "sweep_link": "링크 스윕",
               "data_check": "데이터 검증", "spec_check": "명세 검증",
@@ -62,6 +66,7 @@ def write_reports(
 
 def _write_json(path, meta, summary, results, blocked, discovery_pages, diff) -> None:
     payload = {
+        "schema_version": REPORT_SCHEMA_VERSION,
         "meta": asdict(meta),
         "summary": summary,
         "diff": diff,
