@@ -1,0 +1,173 @@
+# 주문 관리 대시보드 — 테스트 시나리오
+#
+# 생성 방식: `/generate-tests` 절차에 따라 **docs/demo-app-spec.md(기획 의도)** 에서
+# 기대값을 도출했다. 구현 코드(demo_app/app.py)의 쿼리는 참조하지 않았고,
+# 소스에서는 셀렉터(#status 등)와 테이블·컬럼명(orders / id·customer·status·
+# category·amount·created_at)만 좌표로 확인했다.
+#
+# 각 시나리오에는 근거가 된 설명서 조항 번호를 적었다. 근거 없는 기대값은 없다.
+
+target:
+  base_url: "http://127.0.0.1:5057"
+  settle_ms: 400
+  app_version: "demo-generated"
+
+crawl:
+  enabled: true
+  max_pages: 5
+
+button_sweep:
+  enabled: true
+  max_per_page: 30
+
+data_checks:
+  # 근거 §2-1 "상태 하나를 고르면 그 상태인 주문만 나온다.
+  #            배송완료된 주문은 지금 상태가 아니므로 나오면 안 된다."
+  # → 기대: status가 정확히 'shipped'인 행만. (다른 상태를 포함하지 않는다)
+  - name: 상태필터-발송건만
+    description: "§2-1 — shipped를 고르면 발송 상태 주문만 나와야 한다"
+    page: /
+    steps:
+      - {action: select, selector: "#status", value: "shipped"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 카테고리, 금액, 주문일]
+      count_selector: "#result-count"   # 근거 §3-1 건수 표기 = 실제 건수
+    query:
+      db: "sqlite:///demo_app/demo.db"
+      sql: "SELECT id, customer, status, category, amount, created_at FROM orders WHERE status = 'shipped'"
+
+  # 근거 §2-2 "시작일과 종료일은 둘 다 포함한다.
+  #            6월 1일~6월 30일로 조회하면 6월 30일 주문도 반드시 포함된다."
+  # → 기대: 경계 양끝 포함(>= 시작일 AND <= 종료일)
+  - name: 날짜범위-경계일포함
+    description: "§2-2 — 6월 조회 시 시작일·종료일 주문이 모두 포함되어야 한다"
+    page: /
+    steps:
+      - {action: fill, selector: "#date-from", value: "2026-06-01"}
+      - {action: fill, selector: "#date-to", value: "2026-06-30"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 카테고리, 금액, 주문일]
+      count_selector: "#result-count"
+    query:
+      db: "sqlite:///demo_app/demo.db"
+      sql: "SELECT id, customer, status, category, amount, created_at FROM orders WHERE created_at >= '2026-06-01' AND created_at <= '2026-06-30'"
+
+  # 근거 §2-3 "고객명을 입력하면 그 글자가 이름에 들어간 고객의 주문이 나온다(부분 일치)"
+  - name: 고객검색-부분일치
+    description: "§2-3 — '김'으로 검색하면 이름에 김이 든 고객 주문이 모두 나와야 한다"
+    page: /
+    steps:
+      - {action: fill, selector: "#q", value: "김"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 카테고리, 금액, 주문일]
+      count_selector: "#result-count"
+    query:
+      db: "sqlite:///demo_app/demo.db"
+      sql: "SELECT id, customer, status, category, amount, created_at FROM orders WHERE customer LIKE '%김%'"
+
+  # 근거 §2-5 "여러 조건을 함께 걸면 모든 조건을 동시에 만족하는 주문만 나온다(AND)"
+  - name: 복합조건-AND결합
+    description: "§2-5 — 카테고리와 상태를 함께 걸면 둘 다 만족하는 주문만 나와야 한다"
+    page: /
+    steps:
+      - {action: select, selector: "#category", value: "전자기기"}
+      - {action: select, selector: "#status", value: "delivered"}
+      - {action: click, selector: "#apply"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 카테고리, 금액, 주문일]
+      count_selector: "#result-count"
+    query:
+      db: "sqlite:///demo_app/demo.db"
+      sql: "SELECT id, customer, status, category, amount, created_at FROM orders WHERE category = '전자기기' AND status = 'delivered'"
+
+  # 근거 §3-2 "모든 페이지를 합치면 조회 조건에 맞는 전체 주문이 빠짐없이 나와야 한다"
+  - name: 페이지순회-전체수집
+    description: "§3-2 — 페이지를 모두 넘기면 전체 주문이 빠짐없이 모여야 한다"
+    page: /
+    steps:
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 카테고리, 금액, 주문일]
+      count_selector: "#result-count"
+      pagination:
+        next_selector: "#next-page"
+        max_pages: 20
+    query:
+      db: "sqlite:///demo_app/demo.db"
+      sql: "SELECT id, customer, status, category, amount, created_at FROM orders"
+
+spec_checks:
+  # 근거 §4-1 "'요약 보기'를 누르면 현재 조회 결과의 금액 합계가 화면에 나타난다.
+  #            누르기 전에는 보이지 않는다."
+  - name: 요약보기-누르면합계표시
+    description: "§4-1 — 누르기 전엔 숨김, 누르면 합계가 나타나야 한다"
+    page: /
+    steps:
+      - {action: assert_not_visible, selector: "#summary"}   # 누르기 전: 안 보임
+      - {action: click, selector: "#summary-btn"}
+      - {action: assert_visible, selector: "#summary"}
+      - {action: assert_text, selector: "#summary", value: "합계"}
+
+  # 근거 §4-2 "필터를 적용하면 적용한 조건이 주소(URL)에 남는다"
+  - name: 조회조건-주소반영
+    description: "§4-2 — 필터 적용 후 조건이 주소에 남아 공유 가능해야 한다"
+    page: /
+    steps:
+      - {action: select, selector: "#status", value: "pending"}
+      - {action: click, selector: "#apply"}
+      - {action: assert_url, value: "status=pending"}
+
+  # 근거 §5-5 "개발·디버그용 안내나 배너는 일반 사용자 화면에 나오면 안 된다"
+  - name: 디버그배너-노출금지
+    description: "§5-5 — 내부용 디버그 배너가 사용자 화면에 보이면 안 된다"
+    page: /
+    steps:
+      - {action: assert_not_visible, selector: "#debug-banner"}
+
+# 근거 §5-2 "휴대폰·태블릿 폭에서도 화면이 옆으로 넘치지 않아야 한다"
+responsive_checks:
+  - name: 작은화면-가로넘침없음
+    description: "§5-2 — 모바일·태블릿 폭에서 페이지가 가로로 넘치면 안 된다"
+    page: /
+    viewports: [375, 768, 1280]
+    max_overflow_px: 2
+
+# 근거 §5-4 "메인 화면은 2초 안에 로딩이 끝나야 한다"
+perf_checks:
+  - name: 메인화면-2초이내
+    description: "§5-4 — 메인 화면 로딩이 2초를 넘기면 안 된다"
+    page: /
+    metric: load
+    budget_ms: 2000
+
+# 근거 §5-3 "화면의 모든 이동 링크는 실제로 존재하는 페이지로 연결되어야 한다"
+link_check:
+  enabled: true
+  severity: fail
+  ignore_patterns: ["/logout", "/export\\.csv"]   # 세션 종료·다운로드는 상태를 바꾸므로 제외
+
+# 근거 §5-1 "정상 사용 중 콘솔 오류나 서버 오류가 발생하지 않아야 한다"
+#  → 엔진이 모든 시나리오에서 기본 감시(별도 설정 불필요)
+
+a11y:
+  enabled: true
+  severity: info
+
+report:
+  title: 주문 관리 대시보드 자동 테스트 (설명서 기반 생성)
+  video: true
+  trace: true
+
+output_dir: runs
