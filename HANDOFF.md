@@ -1,241 +1,251 @@
-# test-agent 개발 인수인계서
+# 인수인계서 — webtest-agent 시스템
 
-> 마지막 갱신: 2026-07-27  
-> 기준 저장소: `https://github.com/easyseop/test-agent`  
-> 기준 브랜치: `claude/web-app-test-agent-yyc2eq`  
-> 작업 시작 기준 커밋: `75a985cce8639430f82abbf1aa3fb7dcfb812684`
+> **이 문서의 목적**: 대화 컨텍스트가 압축되거나 세션이 새로 시작돼도 작업을 끊김 없이
+> 이어가기 위한 단일 진입점. 새 세션은 **이 문서를 가장 먼저 읽는다.**
+>
+> 마지막 갱신: **2026-07-29**
+> 기준 저장소·브랜치: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq`
+> 기준 커밋: `d9c85c0` · 유닛 테스트 **224개 통과** · 모듈 16개 / 3,927줄
 
-- 안전 구현 커밋: `f16fe28` (`Harden Runner execution safety`)
-- SQL 조회 전용 경계 커밋: `50377f8` (`Enforce read-only oracle SQL`)
-- GitHub 상태: 기능 기준 `a5e5d38`과 이 인수인계까지 기준 브랜치에 push 완료
+---
 
-## 1. 프로젝트 역할
+<!-- CORE:BEGIN — 이 구간은 훅이 매 턴 컨텍스트에 주입한다. 짧게 유지할 것(≈600토큰). -->
 
-`test-agent`는 웹사이트의 테스트를 실제로 실행하는 Python·Playwright Runner다.
-사이트 탐색, UI 조작, UI↔API·DB 대조, 증거 수집, 리포트 생성을 담당한다.
+## 0. 핵심 (매 턴 자동 주입 구간)
 
-테스트용 사이트와 비공개 정답표는 `webtest-agent-lab`, 결과 운영 화면은
-`webtest-agent-site`의 책임이다.
+**현재 위치**: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq` · 커밋 `d9c85c0` ·
+유닛 테스트 224개 통과. 사용자 최종 목표(설명서→시나리오 생성→봇 실행→결과)는 **실증 완료**.
 
-## 2. 이번 완료 개발 단위
+**진행 중**: 멀티 브라우저 지원(`--browser`). Firefox 151.0·WebKit 26.5 구동 실측 확인됨.
+**대기(사용자 결정)**: axe-core 도입 방식 · Console 결과 보존 정책.
+**범위 밖**: `knowledge/` 위키 — 사용자 본인의 일. 요청 전까지 손대지 않는다.
 
-원본 Runner의 첫 번째 false-success P0를 수정했다.
+**절대 규칙 (세션이 바뀌어도 유효)**
+1. 위키(`knowledge/`) 내용은 Claude가 만들지 않는다 — 스키마·슬래시 커맨드까지가 Claude 몫.
+2. **적대적 검증 필수** — "테스트 통과"로 끝내지 말고 반례를 직접 주입하고 실제로 돌린다.
+   내가 짠 수정이 새 회귀를 만드는 일이 실제로 있었다.
+3. 설계·기획 자체가 틀렸으면 그것도 판단해 고친다.
+4. **동어반복 함정 금지** — 기대값은 **앱 설명서(기획 의도)** 에서만. 구현 코드의 WHERE절을
+   베끼면 버그가 기대값에 복제된다. 구현은 셀렉터·테이블명 좌표 확인용으로만.
+5. **판정에 LLM 개입 금지** — 제안은 LLM, 합격/불합격은 결정적 코드.
+6. 비밀값 평문 금지 — YAML은 `${ENV_VAR}`, 리포트·로그는 `***` 마스킹.
+7. 순서: 검토 → 설계 → 구현. 검토 단계에서 기능 코드를 고치지 않는다.
+8. 파괴적 동작(실계정·운영 쓰기·삭제·결제) 시나리오를 만들지 않는다.
 
-- 대상 앱에 브라우저로 접속하지 못하면 `실행 불가`로 종료
-- 실행할 시나리오가 0개면 `실행 불가`로 종료
-- crawl이 켜져 있는데 발견 페이지가 0개면 `실행 불가`로 종료
-- `run` 명령은 실행 불가일 때 종료코드 2 반환
-- `discover` 명령도 접속 실패·0페이지를 성공으로 종료하지 않음
-- `report.json`의 `meta.status`에 `passed`, `failed`, `infra_error` 기록
-- `report.json`의 `meta.error`에 실행 불가 사유 기록
-- HTML·Markdown 리포트에서 실행 불가를 일반 통과와 명확히 구분
-- 웹훅 알림에도 실행 상태와 실행 불가 사유 포함
-- 인증 실패도 진단 리포트를 남기는 실행 불가로 처리
+**판정 계약**: `passed`(0) / `failed`(1, 제품 결함) / `infra_error`(2, 판정 불가).
+`infra_error`를 통과로 처리하면 false success가 된다.
 
-비개발자용 가이드도 함께 추가했다.
+**실행 전 필수**: `fuser -k 5057/tcp` — 떠돌이 데모앱이 거짓 판독을 만든 적 있다.
 
-- `docs/USER_GUIDE.md`
-- `README.md` 첫 부분에 가이드 링크와 실행 불가 설명
-- 담당자 역할, 테스트 정의 보관 위치, 반복 실행 시점, 위키 선택 기준 정리
+⚠️ 컨테이너는 휘발성. 커밋·푸시 안 한 것은 사라진다(§6 미푸시 경고 확인).
 
-두 번째 안전 P0인 인증 상태 파일 보호도 완료했다.
+> **상세가 필요하면 `HANDOFF.md` 전체를 Read로 읽어라.** 위는 요약이고, 전체 문서에는
+> 3저장소 구조(§1)·완료 개발 단위(§4)·재발 방지 교훈(§5)·환경 실측(§6)·다음 작업(§7)이 있다.
 
-- `auth_state.json`을 소유자 전용 권한(0600)으로 생성
-- 정상·실패 종료 모두 기본 자동 삭제
-- `--preserve-auth-state`일 때만 명시적으로 보관
-- 보관 파일은 `.gitignore`로 Git 제외
-- 삭제 실패 시 경고 표시
-- 간결한 `docs/TEST_PLAN.md` 추가
+<!-- CORE:END -->
 
-세 번째 안전 P0인 쓰기 동작 경계도 완료했다.
-
-- 자동 버튼 스윕에서 저장·수정·삭제·결제·발송·초대·배포·로그아웃 차단
-- YAML에서 최소 차단 목록을 제거해도 설정 로더가 다시 병합
-- 설정 로더를 우회해도 Runner 실행 직전 동일 위험 패턴 재검사
-- `write_checks`는 기본 차단하고 `--allow-write-checks`일 때만 실행
-- 차단된 요소·쓰기 시나리오와 이유를 JSON·Markdown·HTML 리포트에 기록
-- 데모 스크립트도 기본 읽기 전용, `--write`로만 시드 DB 쓰기 승인
-
-큰 정수 ID 정규화 단위도 완료했다.
-
-- 셀 값을 float로 바꾸던 정규화를 자릿수 제한 없는 문자열 정규화로 교체
-- JSON 소수는 `Decimal`로 읽어 API 응답의 유효 자릿수 보존
-- JavaScript 안전 정수보다 큰 `9007199254740993` 주문을 데모 시드에 추가
-- 큰 ID의 UI·API·DB 일치와 한 자리 차이 검출 회귀 테스트 추가
-- 의도된 고정 데이터 변경에 맞춰 데모 시각 기준선 갱신
-
-최초 페이지 로드 오류 판정 단위도 완료했다.
-
-- 시나리오 첫 `page.goto` 중 콘솔·페이지·HTTP 오류를 판정에 포함
-- 정상으로 합의된 HTTP 실패는 `target.ignore_http_error_patterns`로만 제외
-- 허용 URL 패턴의 잘못된 정규식은 설정 단계에서 차단
-- `configs/demo-load-error.yaml`과 `--load-error` 실브라우저 검출 모드 추가
-
-전체 실행 deadline 단위도 완료했다.
-
-- `target.run_timeout_ms` 추가, 기본값 30분
-- 브라우저 시작·인증·대상 확인·크롤링·시나리오 전체에 같은 deadline 적용
-- 시나리오 동작 중 남은 시간을 Playwright timeout과 대기 시간에 반영
-- 제한 초과 부분 결과는 `passed`가 아닌 `infra_error`, 종료코드 2
-- 컨텍스트 종료로 브라우저와 기본 인증 상태 파일 정리
-- `configs/demo-deadline.yaml`과 `--deadline` 실브라우저 모드 추가
-
-DB 정답원 SQL 안전 경계도 완료했다.
-
-- `query.sql`은 단일 `SELECT` 또는 `WITH` 조회만 허용
-- 설정 로딩 단계에서 쓰기·DDL·관리 키워드와 다중 문장 차단
-- 설정 객체를 우회해도 DB 실행 직전에 같은 정책 재검사
-- 문자열·인용 식별자·주석 안의 키워드와 세미콜론은 오탐하지 않음
-- SQLite 파일 read-only 연결 유지
-- PostgreSQL·MySQL은 Runner 검사와 별도로 read-only DB 계정 사용 필수
-
-## 3. 검증 결과
+## 0-1. 세션 재개 절차
 
 ```bash
-python3 -m pytest tests/ -q
-./scripts/run_demo.sh
-./scripts/run_demo.sh --bug
-./scripts/run_demo.sh --auth
+cd /home/user/test-agent
+git log --oneline -5 && git status --short     # 어디까지 왔는지
+python3 -m pytest tests/ -q                     # 224 passed 여야 정상
 ```
 
-- 전체 유닛 테스트: 72개 통과
-- 새 회귀 테스트:
-  - 대상 연결 실패 → `infra_error`
-  - 시나리오 0개 → `infra_error`
-  - 실행 불가 상태·사유가 JSON/Markdown/HTML에 표시
-  - 실행 불가 상태·사유가 웹훅에도 표시
-  - 인증 상태 파일 0600 권한
-  - 기본 삭제와 명시적 보관
-  - YAML에서 최소 쓰기 차단 패턴 제거 불가
-  - 자동 스윕 계획과 Runner 실행 단계의 이중 차단
-  - 승인 없는 `write_checks` 미실행과 차단 리포트
-  - 2^53 초과 정수의 정확한 정규화와 한 자리 차이 검출
-  - 첫 page.goto 콘솔·페이지·HTTP 오류 판정
-  - 허용 HTTP URL 필터와 잘못된 정규식 차단
-  - 전체 deadline의 설정 검증·Runner 메시지·partial-success 차단
-  - SQL 단일 문장·SELECT/WITH 시작·쓰기/관리 키워드 차단
-  - 주석·문자열 안의 위험 단어 오탐 방지와 실행 직전 재검사
-- 실제 Chromium E2E:
-  - 최신 기본 읽기 전용 데모: 19개 통과, 위험 동작 4개 차단, DB 123건 유지
-  - `--write` 승인 데모: 20개 통과, 주문 등록 1건 증가 검증
-  - 버그 주입 데모: 알려진 버그를 4개 실패 시나리오로 검출, 종료코드 1
-  - 로그인 데모: 11개 통과, 위험 동작 4개 차단, 경고 0, 실패 0
-    - 실행 종료 후 `auth_state.json` 미잔존 확인
-  - 꺼진 대상: `infra_error` 리포트 생성, 종료코드 2
-  - 큰 주문번호 `9007199254740993`: UI·API·DB 대조 통과, 시각 경고 0
-  - 초기 로드 오류 데모: 콘솔 오류 1건을 실패로 검출, 종료코드 1
-  - deadline 데모: 시나리오 중단, `infra_error`, 종료코드 2
+읽는 순서: **이 문서 → `CLAUDE.md`(규약) → `docs/02-design.md` §5(판정 규칙)**.
+그 다음 §7 "다음 작업"에서 이어간다.
 
-버그 주입 데모의 구현 버그는 3종이지만, 요약 보기 버그는 명세 시나리오와
-버튼 스윕에서 각각 검출되므로 실패 시나리오는 4개다.
+---
 
-## 4. 주요 변경 경로
+## 1. 시스템 구성 — 3개 저장소의 역할
 
-- `webtest_agent/cli.py`: 대상 연결 사전 확인, 0시나리오 가드, 실행 불가 종료
-- `webtest_agent/models.py`: 실행 상태와 실행 불가 사유
-- `webtest_agent/report.py`: 리포트 상태 표시
-- `webtest_agent/notify.py`: 웹훅 실행 상태·사유 표시
-- `webtest_agent/browser.py`: 인증 상태 생명주기와 자동 삭제
-- `webtest_agent/runner.py`: 인증 상태 파일 0600 생성
-- `webtest_agent/safety.py`: 제거 불가능한 자동 탐색 최소 차단 목록
-- `webtest_agent/safety.py`: SQL 단일 조회 문장과 쓰기·관리 키워드 차단
-- `webtest_agent/datacheck.py`: 큰 정수·JSON 소수의 무손실 정규화, SQL 실행 직전 재검사
-- `webtest_agent/config.py`: SQL 설정 단계 조회 전용 검증
-- `webtest_agent/config.py`: 허용 HTTP 오류 URL 정규식 설정·검증
-- `webtest_agent/runner.py`: 첫 page.goto 오류 포함과 HTTP 허용 패턴 필터
-- `demo_app/seed.py`: 2^53 초과 주문번호 고정 데이터
-- `demo_app/app.py`: 초기 콘솔 오류 검증 페이지
-- `configs/demo-load-error.yaml`: 초기 로드 오류 전용 E2E 설정
-- `configs/demo-deadline.yaml`: 전체 제한 초과 전용 E2E 설정
-- `webtest_agent/discovery.py`: 크롤링에 전체 deadline 적용
-- `tests/test_initial_load.py`: 최초 로드 신호와 허용 URL 회귀 테스트
-- `baselines/메인화면-시각.png`: 변경된 고정 데모 데이터 기준선
-- `webtest_agent/scenarios.py`: 위험 요소와 승인 없는 쓰기 검증 차단 계획
-- `webtest_agent/runner.py`: 실행 직전 쓰기 경계 재검사
-- `scripts/run_demo.sh`: 읽기 전용 기본값과 `--write` 승인
-- `tests/test_auth_state.py`: 권한·삭제·보관 회귀 테스트
-- `tests/test_write_safety.py`: 계획·실행 이중 차단 회귀 테스트
-- `tests/test_cli_guards.py`: false-success 회귀 테스트
-- `tests/test_report.py`: 실행 불가 리포트 회귀 테스트
-- `tests/test_notify.py`: 실행 불가 웹훅 회귀 테스트
-- `docs/USER_GUIDE.md`: 비개발자용 사용 가이드
-- `docs/TEST_PLAN.md`: 테스트 목적·합격 기준 목록
-- `README.md`: 사용자 가이드 진입점
-- `docs/02-design.md`: 실행 상태 계약
+| 저장소 | 역할 | 언어 | 브랜치 | 로컬 경로 |
+|---|---|---|---|---|
+| **test-agent** | **Runner(실행 엔진)**. 크롤링·UI 조작·UI↔API↔DB 대조·판정·증적·리포트 | Python + Playwright | `claude/web-app-test-agent-yyc2eq` | `/home/user/test-agent` |
+| **webtest-agent-lab** | **채점장**. 버그를 심은 테스트용 사이트 + **비공개 정답표**로 Runner의 탐지율 측정 | Node.js | `claude/review-fixes-2026-07-27` | `/workspace/webtest-agent-lab` |
+| **webtest-agent-site** | **운영 콘솔**. Runner의 `report.json`을 사람이 보는 화면으로 | Node.js | `claude/review-fixes-2026-07-27` | `/workspace/webtest-agent-site` |
 
-## 5. 상태 해석 계약
+한 줄 요약: **test-agent가 시험을 치고, lab이 채점하고, site가 성적표를 보여준다.**
 
-| `meta.status` | CLI 종료코드 | 의미 |
+정보 흐름은 단방향이다 — Runner는 Lab의 정답표를 절대 볼 수 없다(보면 채점이 무의미해진다).
+
+---
+
+## 2. 사용자 상시 지시 — 절대 규칙 (세션이 바뀌어도 유효)
+
+이 규칙들은 사용자가 명시적으로 지시한 것이다. **새 세션에서 임의로 완화하지 말 것.**
+
+1. **위키(`knowledge/`)는 사용자의 영역이다.** Claude는 위키 *내용*을 만들지 않는다.
+   `CLAUDE.md`의 스키마와 슬래시 커맨드(`/generate-tests`, `/analyze-report`)까지가 Claude 몫.
+2. **적대적 검증은 필수다.** 코드를 짜고 "테스트 통과"로 끝내지 않는다. 반례를 직접 만들어
+   주입하고, 실제로 돌려보고, 내가 만든 코드의 회귀까지 스스로 찾는다.
+   → 실제로 이 방식으로 내 코드의 회귀 2건(§5 참고)을 잡았다.
+3. **설계·기획 자체가 틀렸으면 그것도 고친다.** 시키는 대로만 짜지 말고 계약 결함을 판단할 것.
+4. **동어반복 함정 금지.** 테스트 기대값은 **앱 설명서(기획 의도)** 에서만 도출한다.
+   구현 코드의 WHERE절을 베끼면 버그가 기대값에 복제되어 영원히 검출되지 않는다.
+   구현 코드는 셀렉터·테이블명 등 **좌표 확인용으로만** 쓴다.
+5. **판정에 LLM을 개입시키지 않는다.** 제안은 LLM, 합격/불합격은 결정적 코드.
+6. **비밀값은 평문 금지.** YAML에는 `${ENV_VAR}`만. 리포트·로그에도 마스킹(`***`).
+7. **순서**: 검토 → 설계 → 구현. 검토 단계에서 기능 코드를 고치지 않는다.
+8. **파괴적 동작 금지.** 실계정·운영 쓰기·삭제·결제 시나리오를 만들지 않는다.
+9. OpenMetadata 직접 기동 요청은 **철회됨**. 다시 요청받기 전까지 범위 밖.
+
+### 사용자가 말한 최종 목표 (원문)
+
+> "내가 원했던 건 **테스트케이스 생성된 것에 한해서 자체적으로 테스트시나리오를 작성하고
+> 실제 봇이 테스트하고 결과 내는 거까지**가 목표였어"
+
+→ 이 한 바퀴는 **완료·실증됨** (§4 마지막 항목).
+
+---
+
+## 3. 판정 계약 (3저장소 공통 — 절대 깨지 않는다)
+
+| `meta.status` | 종료코드 | 의미 |
 |---|---:|---|
-| `passed` | 0 | 테스트를 실제 실행했고 실패 없음 |
-| `failed` | 1 | 테스트를 실행했고 하나 이상 실패 |
-| `infra_error` | 2 | 접속·인증·설정 문제로 유효한 판정 불가 |
+| `passed` | 0 | 실제로 실행했고 실패 없음 |
+| `failed` | 1 | 실행했고 하나 이상 실패 (= 제품 결함) |
+| `infra_error` | 2 | 접속·인증·설정·브라우저 문제로 **유효한 판정 불가** |
 
-Lab adapter와 웹 콘솔은 시나리오 수만 보지 말고 이 상태를 우선 사용해야 한다.
+**핵심**: `infra_error`를 `passed`로 처리하면 "테스트 안 돌았는데 통과"가 된다(false success).
+Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선** 해석해야 한다.
 
-## 6. 다음 개발 단위
+`report.json`에는 `schema_version: 1`이 박혀 있고, Console은 상위 버전을 만나면 경고한다.
 
-Runner의 현재 안전 P0와 DB 정답원 SQL 안전 경계는 완료됐다. 다음 시스템
-단위는 두 가지 중 하나다.
+### 검증 7분류 (무엇을 근거로 판정하는가)
 
-1. 실제 대상 URL·테스트 계정 범위를 받아 사이트별 YAML과 테스트 계획 작성
-2. Lab adapter가 Runner의 `meta.status`(`passed/failed/infra_error`)를 우선 해석하도록 연결 검증
+① 오류 신호(콘솔·HTTP) ② 독립 정답원 대조(DB·API) ③ 명세 단언 ④ 불변식
+⑤ 상태 전이 ⑥ 시각 회귀 ⑦ 사람 판단(자동화 불가 — 리포트로 위임)
 
-2번은 2026-07-27 Lab 로컬 작업본에서 완료했다.
+---
 
-- Lab Node 테스트 60개 통과
-- 최신 Runner normal profile 7/7 통과
-- `infra_error` 우선 처리와 상태·종료코드 충돌 차단
-- Lab `docs/USER_GUIDE.md`, `HANDOFF.md` 갱신
-- Lab `main`의 `63d6cab`까지 GitHub 반영 완료
+## 4. 완료된 개발 단위 (누적)
 
-같은 날 최신 Runner 로컬 작업본의 Auth Lab 9-profile 탐색 측정도 완료했다.
+### 4-A. 초기 안전 P0 (이전 세션)
+- 브라우저 접속 실패·시나리오 0개·크롤 0페이지 → `infra_error`(종료코드 2)
+- 인증 상태 파일 0600 권한 + 기본 자동 삭제(`--preserve-auth-state`로만 보관)
+- 쓰기 동작 경계: 스윕에서 저장·삭제·결제·발송·초대·배포·로그아웃 차단(YAML로 해제 불가)
+- `write_checks`는 `--allow-write-checks` 없으면 미실행
+- 2^53 초과 정수 무손실 정규화(float 변환 제거, JSON은 `Decimal`)
+- 최초 `page.goto`의 콘솔·HTTP 오류도 판정에 포함
+- 전체 실행 deadline(`target.run_timeout_ms`, 기본 30분) — 초과 시 `infra_error`
+- DB 정답원 SQL 조회 전용 강제(단일 `SELECT`/`WITH`, 쓰기·DDL·관리 키워드 차단)
 
-- normal 공개 scenario 7/7 통과
-- seeded bug 8개 중 7개 탐지(87.5%)
-- 초기 화면 console error 프로필 탐지
-- `AUTH-B08` 1개 미탐
-- 예상 밖 finding 0, 실행 불가 0
+### 4-B. 코드 검토 → 적대적 검증 → 수정 (이번 세션)
+1. **비밀값 노출 P0 (3저장소 관통)** — Runner 증적 → Lab manifest → Console 화면까지
+   비밀번호가 흘러가는 경로를 실증. `Step.secret` + 셀렉터 정규식 마스킹으로 차단.
+   (`#compass`가 `pass`에 걸리던 오탐은 lookbehind/lookahead로 해결)
+2. **브라우저 사망 계약 결함** — 크래시가 *제품 실패*로 위장되던 문제. `BrowserGoneError` →
+   `infra_error`. 단, 마커를 너무 넓게 잡으면(`"has been closed"`, `"crashed"`) 앱 오류가
+   infra로 오분류됨 — **내 코드의 회귀를 자체 적대적 검증으로 발견**하고 좁혔다.
+3. **Lab 손자 프로세스 잔존** — `detached: true` + `process.kill(-pid)` 프로세스 그룹 종료.
+   (좀비 판정을 `kill(pid,0)`로 하면 잘못 살아있다고 나옴 → `ps -o stat=`의 `Z` 판정으로 수정)
+4. **Lab 비공개 ID 누출 검사** — 정규식을 넓히니 UUID에 ~1.3% 오탐 → 실제 정답 ID 목록 기반
+   매칭 + 보수적 fallback으로 교체.
+5. **Console 문자열 길이 상한** — `MAX_NAME_LENGTH=200`, `MAX_REASON_LENGTH=500`.
 
-탐색 측정에 사용한 `f16fe28`과 최신 Runner `a5e5d38`은 이제 원격 기준
-브랜치에 고정됐다. 실제 대상 정보를 받거나, `a5e5d38`을 기준으로 같은 측정을
-반복해 Lab의 공식 private baseline을 갱신한다.
+### 4-C. 신규 기능 (각각 적대적 검증 동반)
+| # | 기능 | 요점 |
+|---|---|---|
+| 1 | 반응형 점검 `responsive_checks` | 다중 뷰포트 가로 오버플로 결정적 검출 |
+| 2 | 시각 기준선 승인 정책 | 최초 생성을 무승인 통과로 두지 않고 **경고**로 (P2 자체 발견) |
+| 3 | 병렬 실행 `--workers N` | 읽기 전용만 병렬, 쓰기는 직렬·최후. **리포트 순서는 입력 순서 고정** |
+| 4 | 접근성 점검 + `a11y.severity` | 게이팅 선택 가능(`info`/`warn`/`fail`) |
+| 5 | `schema_version` | 3저장소 계약 drift 방지 |
+| 6 | JUnit XML `report.xml` | CI 테스트별 결과 표시 |
+| 7 | 깨진 링크 검사 `link_check` | HEAD → 405/501이면 GET 재시도 |
+| 8 | 성능 예산 `perf_checks` | 로드 지표 임계 게이트(결정적) |
+| 9 | 부정 단언 | `assert_not_visible` / `assert_not_text` — **부재**를 검증 |
+| 10 | 커버리지 요약 | "조용한 상한" 노출 — 무엇을 **안** 테스트했는지 드러냄 |
 
-LLM Wiki 구축은 사용자가 다시 요청하기 전까지 범위에서 제외한다.
+### 4-D. 한 바퀴 실증 ⭐ (사용자 최종 목표)
+`d9c85c0`. **설명서 → 시나리오 자동 생성 → 봇 실행 → 결과**를 실제로 돌렸다.
 
-## 7. 재개 명령
+- `docs/demo-app-spec.md` — 업무 용어로만 쓴 기획 문서(SQL·함수명 없음). **기대값의 유일한 근거.**
+- `configs/demo-generated.yaml` — 각 시나리오에 근거 조항 번호(`§2-2` 등) 주석.
+- **동어반복 함정 회피 실증**: 설명서 §2-2가 "시작일과 종료일은 **둘 다 포함**"이라
+  기대 SQL은 `created_at <= '2026-06-30'`. 구현은 `<`를 써서 경계 3건이 누락 →
+  **구현을 안 봤기 때문에 잡혔다.** 구현을 베꼈다면 영원히 못 잡을 버그.
+
+---
+
+## 5. 이번 세션에서 배운 것 (반복하지 말 것)
+
+- **오래된 로컬 코드로 검토했다** — 원격이 앞서 있었다. 검토 전 `git fetch` 필수.
+- **코드 읽기만으로 "검증했다"고 하지 말 것** — 사용자 지적(“비판적으로? 적대적으로?”) 후
+  실제 실행·반례 주입으로 전환하니 실결함 7건 이상이 나왔다.
+- **내가 짠 수정이 새 회귀를 만든다** — 위 §4-B 2번·4번이 그 사례. 수정 후에도 적대적 검증.
+- **환경을 못 한다고 단정하지 말 것** — "크로스 브라우저 불가"라고 했는데 실제로 해보니
+  Firefox·WebKit 둘 다 설치·구동됐다. **먼저 시도하고 말할 것.**
+- **떠돌이 프로세스가 결과를 속인다** — 5057 포트에 남은 데모앱 때문에 "버그 모드 전부 통과"
+  라는 거짓 판독이 나왔다. 실행 전 `fuser -k 5057/tcp`.
+
+---
+
+## 6. 환경 사실 (2026-07-29 실측)
+
+| 항목 | 상태 | 비고 |
+|---|---|---|
+| Chromium | ⚠️ 간접 | `p.chromium.launch()` 직접 호출은 revision 불일치로 실패. 엔진의 `find_chromium_executable()` fallback으로 동작 |
+| **Firefox** | ✅ **151.0 구동 확인** | `playwright install firefox` 성공 |
+| **WebKit** | ✅ **26.5 구동 확인** | `playwright install-deps webkit`으로 시스템 라이브러리 ~20개 설치 후 성공 |
+| axe-core | ✅ 다운로드 가능 (559KB) | **MPL-2.0 — 상업적 사용 무료.** axe 파일 자체를 수정할 때만 파일 단위 copyleft |
+| Docker | ❌ **차단** | 바이너리는 있으나 데몬 없음(`/var/run/docker.sock` 부재) |
+
+### ⚠️ 미푸시 커밋 경고 (컨테이너 휘발 시 소실)
+
+```
+/workspace/webtest-agent-lab   claude/review-fixes-2026-07-27  → origin/main 대비 2 커밋 미푸시
+/workspace/webtest-agent-site  claude/review-fixes-2026-07-27  → origin/main 대비 2 커밋 미푸시
+```
+
+이 세션의 GitHub 권한 범위는 `easyseop/test-agent` **한 곳뿐**이다. lab/site를 밀려면
+`add_repo`로 붙이고 **사용자 승인**을 받아야 한다. 새 세션은 이 두 저장소가 로컬에
+없을 수 있다(컨테이너 재생성 시 소실) — 그때는 GitHub `main` 기준으로 다시 시작한다.
+
+---
+
+## 7. 다음 작업
+
+### 진행 중
+- **멀티 브라우저 지원(`--browser`)** — Firefox·WebKit 구동이 실측 확인됐으므로 구현 가능.
+  주의점: 시각 기준선은 브라우저마다 렌더링이 달라 **기준선을 브라우저별로 격리**해야 한다.
+  안 그러면 Firefox 실행이 Chromium 기준선과 비교돼 전부 실패한다.
+
+### 대기 (사용자 결정 필요)
+- **axe-core 도입 방식** — 권고: 번들 동봉 + 기본 `severity: info`(경고만, 게이팅 안 함).
+  이유: 규칙 100여 개가 한꺼번에 켜지면 기존 운영이 빨갛게 물든다. 점진 승격이 안전.
+- **Console 결과 보존 정책** — 얼마나 오래, 어디에 저장할지는 사용자 정책 사항.
+
+### 차단됨 (환경 한계 — 코드 문제 아님)
+- **Docker 격리 실행** — 데몬 없음.
+- **Lab 공식 기준선 재측정** — 이 컨테이너에서 Lab 하니스 아래 Chromium이 죽는다.
+  Lab `HANDOFF.md`에 한계로 기록해 뒀다(거짓 수치를 남기지 않기 위해).
+
+### 범위 밖
+- **LLM 위키(`knowledge/`) 구축** — 사용자 본인의 일. 요청 전까지 손대지 않는다.
+
+---
+
+## 8. 자주 쓰는 명령
 
 ```bash
-git clone https://github.com/easyseop/test-agent.git
-cd test-agent
-pip install -r requirements.txt
-python -m playwright install chromium
-python3 -m pytest tests/ -q
-./scripts/run_demo.sh
-./scripts/run_demo.sh --auth
+python3 -m pytest tests/ -q                              # 224 passed
+fuser -k 5057/tcp 2>/dev/null                            # 떠돌이 데모앱 정리 (실행 전 필수)
+./scripts/run_demo.sh                                     # 정상 모드 — 전부 통과해야 정상
+./scripts/run_demo.sh --bug                               # 버그 주입 — 검출 + 종료코드 1이 정상
+python3 -m webtest_agent run -c configs/demo-generated.yaml    # 설명서 기반 생성 시나리오
+python3 -m webtest_agent discover -c configs/demo.yaml         # 크롤링·인벤토리만
 ```
 
-## 8. 다음 Codex·Claude 작업 요청 예시
+산출물: `runs/<타임스탬프>/` — `report.html`(단일파일)·`report.json`·`report.xml`(JUnit)·
+`walkthrough.md`·`videos/`·`traces/`·`discovery.json`. **gitignore됨**(증적은 로컬 보관).
 
-```text
-test-agent의 README.md, CLAUDE.md, HANDOFF.md,
-docs/USER_GUIDE.md를 먼저 읽어줘.
-Runner HANDOFF.md와 docs/USER_GUIDE.md를 먼저 읽어줘.
-완료된 안전 P0와 Lab meta.status 연결을 유지해줘.
-실제 대상 URL이 있으면 사이트별 테스트 계획·YAML을 작성하고,
-없으면 GitHub에 고정된 a5e5d38의 9-profile 공식 기준선을 측정해줘.
-비개발자용 사용자 가이드를 함께 갱신하고,
-유닛 테스트와 demo/auth E2E를 검증한 뒤 HANDOFF.md에 결과를 기록해줘.
-토큰·비밀번호·쿠키는 문서나 커밋에 넣지 마.
-```
+---
 
 ## 9. 문서 갱신 규칙
 
-완료된 개발 단위마다 다음 순서를 지킨다.
+개발 단위를 끝낼 때마다: **구현 → 유닛 테스트 → 적대적 검증 → 이 문서 갱신 → 커밋**.
 
-```text
-구현 → 테스트 → 비개발자 가이드 갱신 → HANDOFF.md 갱신 → 변경 검토
-```
-
-인수인계서에는 변경 경로, 검증 결과, 알려진 문제, 다음 작업을 기록한다.
-실제 토큰, 비밀번호, 쿠키, DB 자격증명은 기록하지 않는다.
+이 문서에 기록할 것: 무엇을 바꿨나 · 어떻게 검증했나 · 무엇이 막혔나 · 다음은 무엇인가.
+**기록하지 말 것**: 실제 토큰·비밀번호·쿠키·DB 자격증명, 모델 식별자.
