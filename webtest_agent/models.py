@@ -149,6 +149,9 @@ class RunMeta:
     started_at: str
     finished_at: str = ""
     duration_ms: int = 0
+    # 어느 엔진으로 판정했는지. 엔진이 다르면 렌더링·JS 지원이 달라 결과도
+    # 달라질 수 있으므로 증적에 반드시 남는다(없으면 재현이 불가능하다).
+    browser: str = "chromium"
     browser_version: str = ""
     playwright_version: str = ""
     python_version: str = ""

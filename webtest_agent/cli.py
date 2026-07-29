@@ -9,7 +9,7 @@ from importlib import metadata
 from pathlib import Path
 
 from . import __version__
-from .browser import BrowserSession
+from .browser import ENGINES, BrowserSession
 from .config import AgentConfig, ConfigError, load_config
 from .discovery import Discovery, crawl
 from .history import diff_for
@@ -42,6 +42,15 @@ def _pw_version() -> str:
         return metadata.version("playwright")
     except metadata.PackageNotFoundError:
         return "?"
+
+
+def _resolve_engine(args, cfg: AgentConfig) -> str:
+    """브라우저 엔진 결정: CLI --browser가 설정보다 우선.
+
+    CI가 같은 YAML로 여러 엔진을 돌릴 수 있어야 하므로 CLI 우선이다.
+    """
+    from .browser import normalize_engine
+    return normalize_engine(getattr(args, "browser", None) or cfg.target.browser)
 
 
 def _make_run_dir(cfg: AgentConfig, out: str | None) -> Path:
@@ -196,6 +205,7 @@ def _run_parallel(parallel, collected, cfg, run_dir, args, deadline, workers,
     from .browser import BrowserSession
     from .runner import Runner
 
+    engine = _resolve_engine(args, cfg)
     local = threading.local()
     created: list[BrowserSession] = []
     lock = threading.Lock()
@@ -204,7 +214,7 @@ def _run_parallel(parallel, collected, cfg, run_dir, args, deadline, workers,
         r = getattr(local, "runner", None)
         if r is not None:
             return r
-        session = BrowserSession(headless=not args.headed)
+        session = BrowserSession(headless=not args.headed, engine=engine)
         session.start()
         if auth_state is not None:
             session.configure_storage_state(auth_state, preserve=True)
@@ -277,9 +287,10 @@ def _require_scenarios(scenarios: list) -> None:
 
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
+    engine = _resolve_engine(args, cfg)
     run_dir = _make_run_dir(cfg, args.out)
     print(f"▶ {cfg.report.title}")
-    print(f"  대상: {cfg.target.base_url} · 산출물: {run_dir}/")
+    print(f"  대상: {cfg.target.base_url} · 브라우저: {engine} · 산출물: {run_dir}/")
 
     meta = RunMeta(
         title=cfg.report.title,
@@ -305,7 +316,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     # 실행 불가(infra_error)다. 여기서 잡지 않으면 파이썬 traceback으로 죽어
     # 종료코드 1(계약상 '유효한 실행 + 실패')로 오해되고 리포트도 남지 않는다.
     try:
-      with BrowserSession(headless=not args.headed) as session:
+      with BrowserSession(headless=not args.headed, engine=engine) as session:
+        meta.browser = engine
         meta.browser_version = session.version
         allow_write_checks = bool(getattr(args, "allow_write_checks", False))
         runner = Runner(
@@ -564,8 +576,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_discover(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
+    engine = _resolve_engine(args, cfg)
     run_dir = _make_run_dir(cfg, args.out)
-    with BrowserSession(headless=not args.headed) as session:
+    with BrowserSession(headless=not args.headed, engine=engine) as session:
         if cfg.auth:
             runner = Runner(session, cfg, run_dir)
             state_path = run_dir / "auth_state.json"
@@ -608,6 +621,11 @@ def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-c", "--config", required=True, help="설정 YAML 경로")
     common.add_argument("--headed", action="store_true", help="브라우저 창을 띄워 실행")
+    common.add_argument(
+        "--browser",
+        choices=list(ENGINES),
+        help="테스트에 쓸 브라우저 엔진(기본: 설정의 target.browser 또는 chromium)",
+    )
     common.add_argument("--out", help="산출물 루트 디렉터리 (기본: 설정의 output_dir)")
     common.add_argument(
         "--preserve-auth-state",

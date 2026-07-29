@@ -104,6 +104,7 @@ class TargetConfig:
     scenario_timeout_ms: int = 60000
     run_timeout_ms: int = 1800000
     app_version: str = ""
+    browser: str = "chromium"    # chromium · firefox · webkit
     flaky_recheck: bool = False  # 실패 시 1회 재실행해 간헐(flaky) 여부 표시
     ignore_http_error_patterns: list[str] = field(default_factory=list)
 
@@ -316,6 +317,16 @@ def _sub(data: dict, key: str) -> dict:
     return v
 
 
+def _browser_name(value) -> str:
+    """엔진 이름 검증. 오타를 조용히 chromium으로 넘기면 어느 엔진으로 판정했는지
+    아무도 모르게 된다 — 설정 단계에서 막는다."""
+    from .browser import UnsupportedEngineError, normalize_engine
+    try:
+        return normalize_engine(None if value is None else str(value))
+    except UnsupportedEngineError as err:
+        raise ConfigError(f"target.browser: {err}") from err
+
+
 def _regex_list(values, where: str) -> list[str]:
     patterns = [str(value) for value in (values or [])]
     for index, pattern in enumerate(patterns):
@@ -379,6 +390,7 @@ def load_config(path: str | Path) -> AgentConfig:
         scenario_timeout_ms=int(t.get("scenario_timeout_ms", 60000)),
         run_timeout_ms=int(t.get("run_timeout_ms", 1800000)),
         app_version=str(t.get("app_version", "")),
+        browser=_browser_name(t.get("browser")),
         flaky_recheck=bool(t.get("flaky_recheck", False)),
         ignore_http_error_patterns=_regex_list(
             t.get("ignore_http_error_patterns"),

@@ -49,8 +49,9 @@ class _FakePage:
 class _FakeSession:
     version = "fake"
 
-    def __init__(self, headless=True, page_error=None):
+    def __init__(self, headless=True, engine="chromium", page_error=None):
         self.headless = headless
+        self.engine = engine
         self.ctx = _FakeContext()
         self.page = _FakePage(page_error)
 

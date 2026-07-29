@@ -45,6 +45,10 @@ _BROWSER_GONE_MARKERS = (
     "Browser.newContext",
     "has crashed",                     # "Page has crashed" 등 Playwright 문구
     "Page crashed",
+    # 드라이버(Playwright node 프로세스)가 죽은 경우. 제품 코드로는 절대 만들 수
+    # 없는 문구이므로 오탐 위험 없이 실행 불가로 볼 수 있다.
+    "Connection closed",
+    "while reading from the driver",
 )
 
 
@@ -380,7 +384,13 @@ class Runner:
         except Exception as err:
             # 브라우저/컨텍스트가 죽은 것은 제품 실패가 아니라 실행 불가다.
             # 여기서 실패로 처리하면 이후 시나리오도 줄줄이 거짓 실패가 된다.
-            if _is_browser_gone(err):
+            #
+            # 문구 매칭만으로는 부족하다: Chromium이 죽으면 'Target closed'가 아니라
+            # 그냥 Timeout으로 나타난다(실측). 타임아웃 문구를 실행 불가로 넣으면
+            # 이번엔 진짜 제품 버그(느린 화면·안 뜨는 요소)가 실행 불가로 숨는다.
+            # 그래서 문구 대신 브라우저 생존 여부를 직접 묻는다 — 엔진 문구에
+            # 의존하지 않는 결정적 판별이다.
+            if _is_browser_gone(err) or not self._browser_alive():
                 raise BrowserGoneError(_short(err)) from err
             hard_fail = True
             res.reasons.append(f"실행 오류: {_short(err)}")
@@ -497,9 +507,37 @@ class Runner:
             rows += more
         return headers, rows
 
+    def _browser_alive(self) -> bool:
+        """브라우저가 아직 붙어 있는가.
+
+        엔진마다 사망 시 문구가 다르다(실측: Firefox·WebKit은 'Target closed',
+        Chromium은 Timeout, 드라이버 사망은 'Connection closed'). 문구를 넓게
+        잡으면 앱 오류가 실행 불가로 둔갑하므로, 애매할 때는 이 값을 근거로 쓴다.
+
+        판단이 불가능하면 True(=살아 있음)를 돌려준다. 확신 없이 실행 불가로
+        올리면 진짜 제품 실패가 조용히 묻힌다 — 판정은 보수적으로.
+        """
+        browser = getattr(self.session, "browser", None)
+        if browser is None:
+            return True
+        try:
+            return bool(browser.is_connected())
+        except Exception:
+            return True
+
+    def _baseline_path(self, name: str) -> Path:
+        """시각 기준선은 엔진별로 분리한다.
+
+        같은 화면이라도 Chromium·Firefox·WebKit은 글꼴 힌팅·안티에일리어싱이 달라
+        픽셀이 어긋난다. 한 폴더를 공유하면 Firefox 실행이 Chromium 기준선과
+        비교돼 전 시나리오가 실패하거나, 반대로 --update-baselines 한 번에
+        다른 엔진의 기준선이 덮여 조용히 사라진다.
+        """
+        return Path(self.cfg.baselines_dir) / self.session.engine / f"{slugify(name)}.png"
+
     def _visual_check(self, page, scenario: Scenario, shots_dir: Path) -> VisualResult:
         spec = scenario.visual_spec
-        baseline = Path(self.cfg.baselines_dir) / f"{slugify(spec.name)}.png"
+        baseline = self._baseline_path(spec.name)
         current = shots_dir / "visual_current.png"
         current.parent.mkdir(parents=True, exist_ok=True)
 

@@ -5,7 +5,7 @@
 >
 > 마지막 갱신: **2026-07-29**
 > 기준 저장소·브랜치: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq`
-> 기준 커밋: `d9c85c0` · 유닛 테스트 **224개 통과** · 모듈 16개 / 3,927줄
+> 유닛 테스트 **257개 통과** (커밋·브랜치는 훅이 매 턴 실측 주입 — 문서 값은 참고용)
 
 ---
 
@@ -13,10 +13,10 @@
 
 ## 0. 핵심 (매 턴 자동 주입 구간)
 
-**현재 위치**: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq` · 커밋 `d9c85c0` ·
-유닛 테스트 224개 통과. 사용자 최종 목표(설명서→시나리오 생성→봇 실행→결과)는 **실증 완료**.
+**현재 위치**: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq` ·
+유닛 테스트 257개 통과. 사용자 최종 목표(설명서→시나리오 생성→봇 실행→결과)는 **실증 완료**.
 
-**진행 중**: 멀티 브라우저 지원(`--browser`). Firefox 151.0·WebKit 26.5 구동 실측 확인됨.
+**최근 완료**: 멀티 브라우저(`--browser chromium|firefox|webkit`) — 3엔진 실측 검증 완료.
 **대기(사용자 결정)**: axe-core 도입 방식 · Console 결과 보존 정책.
 **범위 밖**: `knowledge/` 위키 — 사용자 본인의 일. 요청 전까지 손대지 않는다.
 
@@ -49,7 +49,7 @@
 ```bash
 cd /home/user/test-agent
 git log --oneline -5 && git status --short     # 어디까지 왔는지
-python3 -m pytest tests/ -q                     # 224 passed 여야 정상
+python3 -m pytest tests/ -q                     # 257 passed 여야 정상
 ```
 
 읽는 순서: **이 문서 → `CLAUDE.md`(규약) → `docs/02-design.md` §5(판정 규칙)**.
@@ -158,6 +158,21 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
 | 9 | 부정 단언 | `assert_not_visible` / `assert_not_text` — **부재**를 검증 |
 | 10 | 커버리지 요약 | "조용한 상한" 노출 — 무엇을 **안** 테스트했는지 드러냄 |
 
+### 4-C-2. 멀티 브라우저 (2026-07-29)
+`--browser chromium|firefox|webkit` (또는 `target.browser`, CLI 우선).
+
+- **3엔진 실측**: 정상 모드 18/18 통과 · 버그 주입 모드 **셋 다 동일하게 11통과·8실패**
+  → 검출 능력이 엔진에 무관함을 실증(엔진을 바꿔도 판정이 흔들리지 않는다).
+- **기준선 엔진별 격리** `baselines/<엔진>/` — 공유하면 Firefox 실행이 Chromium
+  기준선과 비교돼 전부 실패하거나, `--update-baselines` 한 번에 다른 엔진 기준선이
+  조용히 덮인다. 새 엔진 첫 실행은 **경고**(미승인 기준선)로 뜬다.
+- **적대적 검증에서 실결함 발견 → 수정**: 브라우저를 SIGKILL했을 때
+  Chromium은 `Target closed`가 아니라 **그냥 Timeout**이 난다(Firefox·WebKit은
+  `Target closed`). 문구 매칭만 쓰면 **크래시가 제품 실패로 둔갑**한다. 그렇다고
+  타임아웃을 실행 불가 목록에 넣으면 이번엔 진짜 제품 버그가 숨는다.
+  → 문구 대신 **`browser.is_connected()` 생존 확인**으로 판별(§`docs/02-design.md` §5).
+  양방향 검증 완료: 죽은 브라우저 → 실행 불가 / 살아있음+없는 요소 → 제품 실패 유지.
+
 ### 4-D. 한 바퀴 실증 ⭐ (사용자 최종 목표)
 `d9c85c0`. **설명서 → 시나리오 자동 생성 → 봇 실행 → 결과**를 실제로 돌렸다.
 
@@ -186,9 +201,9 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
 
 | 항목 | 상태 | 비고 |
 |---|---|---|
-| Chromium | ⚠️ 간접 | `p.chromium.launch()` 직접 호출은 revision 불일치로 실패. 엔진의 `find_chromium_executable()` fallback으로 동작 |
-| **Firefox** | ✅ **151.0 구동 확인** | `playwright install firefox` 성공 |
-| **WebKit** | ✅ **26.5 구동 확인** | `playwright install-deps webkit`으로 시스템 라이브러리 ~20개 설치 후 성공 |
+| Chromium 141 | ✅ 구동(간접) | `p.chromium.launch()` 직접 호출은 revision 불일치로 실패. 엔진의 `find_chromium_executable()` fallback으로 동작 |
+| **Firefox 151** | ✅ **E2E 검증 완료** | `--browser firefox` 정상 18/18 · 버그모드 11/8 |
+| **WebKit 26.5** | ✅ **E2E 검증 완료** | `install-deps webkit`으로 시스템 라이브러리 ~20개 설치 후 성공 |
 | axe-core | ✅ 다운로드 가능 (559KB) | **MPL-2.0 — 상업적 사용 무료.** axe 파일 자체를 수정할 때만 파일 단위 copyleft |
 | Docker | ❌ **차단** | 바이너리는 있으나 데몬 없음(`/var/run/docker.sock` 부재) |
 
@@ -206,11 +221,6 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
 ---
 
 ## 7. 다음 작업
-
-### 진행 중
-- **멀티 브라우저 지원(`--browser`)** — Firefox·WebKit 구동이 실측 확인됐으므로 구현 가능.
-  주의점: 시각 기준선은 브라우저마다 렌더링이 달라 **기준선을 브라우저별로 격리**해야 한다.
-  안 그러면 Firefox 실행이 Chromium 기준선과 비교돼 전부 실패한다.
 
 ### 대기 (사용자 결정 필요)
 - **axe-core 도입 방식** — 권고: 번들 동봉 + 기본 `severity: info`(경고만, 게이팅 안 함).
@@ -230,7 +240,7 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
 ## 8. 자주 쓰는 명령
 
 ```bash
-python3 -m pytest tests/ -q                              # 224 passed
+python3 -m pytest tests/ -q                              # 257 passed
 fuser -k 5057/tcp 2>/dev/null                            # 떠돌이 데모앱 정리 (실행 전 필수)
 ./scripts/run_demo.sh                                     # 정상 모드 — 전부 통과해야 정상
 ./scripts/run_demo.sh --bug                               # 버그 주입 — 검출 + 종료코드 1이 정상

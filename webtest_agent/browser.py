@@ -13,6 +13,24 @@ from .models import HttpFailure
 VIEWPORT = {"width": 1280, "height": 800}
 _IGNORED_URL_SUFFIXES = ("/favicon.ico",)
 
+# 지원 엔진. 같은 앱이라도 엔진마다 렌더링·JS 지원이 달라서, 브라우저는
+# '설정 한 줄'이 아니라 판정 결과를 바꾸는 변수다 — 그래서 증적에 반드시 남긴다.
+ENGINES = ("chromium", "firefox", "webkit")
+
+
+class UnsupportedEngineError(ValueError):
+    """알 수 없는 브라우저 엔진 이름."""
+
+
+def normalize_engine(name: str | None) -> str:
+    # 빈 값·공백은 오타가 아니라 '안 적음'이므로 기본값으로 본다.
+    # 'safari' 같은 오타만 막는다 — 그건 다른 엔진을 의도한 것이라 위험하다.
+    engine = (name or "").strip().lower() or "chromium"
+    if engine not in ENGINES:
+        raise UnsupportedEngineError(
+            f"지원하지 않는 브라우저입니다: {name!r} (가능: {', '.join(ENGINES)})")
+    return engine
+
 
 def find_chromium_executable() -> str | None:
     """사전 설치된 Chromium 실행 파일 탐색 (Playwright 기본 경로 실패 시 폴백)."""
@@ -108,8 +126,9 @@ class PageMonitor:
 
 
 class BrowserSession:
-    def __init__(self, headless: bool = True) -> None:
+    def __init__(self, headless: bool = True, engine: str = "chromium") -> None:
         self.headless = headless
+        self.engine = normalize_engine(engine)
         self._pw = None
         self.browser: Browser | None = None
         self.viewport = dict(VIEWPORT)   # 반응형 점검이 뷰포트 변경 후 되돌릴 기준값
@@ -127,13 +146,17 @@ class BrowserSession:
 
     def start(self) -> None:
         self._pw = sync_playwright().start()
+        launcher = getattr(self._pw, self.engine)
         try:
-            self.browser = self._pw.chromium.launch(headless=self.headless)
+            self.browser = launcher.launch(headless=self.headless)
         except Exception:
-            exe = find_chromium_executable()
+            # 실행 파일 탐색 폴백은 Chromium 전용이다. Firefox·WebKit에서
+            # Chromium 바이너리를 물리면 엉뚱한 엔진으로 조용히 돌아간다 —
+            # 어느 엔진으로 판정했는지가 어긋나므로 그냥 실패시킨다.
+            exe = find_chromium_executable() if self.engine == "chromium" else None
             if not exe:
                 raise
-            self.browser = self._pw.chromium.launch(headless=self.headless, executable_path=exe)
+            self.browser = launcher.launch(headless=self.headless, executable_path=exe)
 
     def stop(self) -> None:
         try:

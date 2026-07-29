@@ -35,6 +35,15 @@ _RUN_STATUS_LABEL = {
     "infra_error": "실행 불가",
 }
 
+_ENGINE_LABEL = {"chromium": "Chromium", "firefox": "Firefox", "webkit": "WebKit"}
+
+
+def _engine_label(meta) -> str:
+    """리포트에 표시할 브라우저 이름. 엔진을 하드코딩하면 Firefox 실행 결과에
+    'Chromium'이라고 적히고, 증적이 거짓이 된다."""
+    engine = getattr(meta, "browser", "") or "chromium"
+    return f"{_ENGINE_LABEL.get(engine, engine)} {meta.browser_version}".strip()
+
 
 def summarize(results: list[ScenarioResult]) -> dict:
     return {
@@ -159,7 +168,7 @@ def _meta_lines(meta: RunMeta, summary: dict) -> list[str]:
         f"- 대상: {meta.base_url}{version}",
         f"- 실행 상태: **{_RUN_STATUS_LABEL.get(meta.status, meta.status)}**",
         f"- 실행: {meta.started_at} ~ {meta.finished_at} ({meta.duration_ms / 1000:.1f}s)",
-        f"- 환경: Chromium {meta.browser_version} · Playwright {meta.playwright_version}"
+        f"- 환경: {_engine_label(meta)} · Playwright {meta.playwright_version}"
         f" · Python {meta.python_version} · agent {meta.agent_version}",
         f"- 결과: **통과 {summary['pass']} · 경고 {summary['warn']} · 실패 {summary['fail']}** (총 {summary['total']})",
     ]
@@ -490,7 +499,7 @@ def _write_html(path, run_dir, meta, summary, results, blocked, diff=None, disco
         f"<tr><td>실행 상태</td><td>{_esc(_RUN_STATUS_LABEL.get(meta.status, meta.status))}</td></tr>",
         f"<tr><td>실행</td><td>{_esc(meta.started_at)} ~ {_esc(meta.finished_at)}"
         f" ({meta.duration_ms / 1000:.1f}s)</td></tr>",
-        f"<tr><td>환경</td><td>Chromium {_esc(meta.browser_version)} · Playwright "
+        f"<tr><td>환경</td><td>{_esc(_engine_label(meta))} · Playwright "
         f"{_esc(meta.playwright_version)} · Python {_esc(meta.python_version)}"
         f" · agent {_esc(meta.agent_version)}</td></tr>",
     ])
