@@ -143,34 +143,71 @@ def _link_check_scenario(session, cfg, discovery):
     return res
 
 
-def _a11y_scenario_result(pages, severity: str):
+def _a11y_scenario_result(pages, severity: str, engine: str = "axe",
+                          min_impact: str = "minor"):
     """크롤링한 페이지의 접근성 이슈를 하나의 판정 시나리오로 합친다.
 
     severity=fail이면 이슈가 있을 때 실패, warn이면 경고. 정보성(info)일 때는
     이 함수를 호출하지 않는다(시나리오를 만들지 않음).
+
+    **점검 실패(axe 주입 불가 등)는 '위반 없음'이 아니다.** 검사를 못 한 페이지를
+    통과로 세면 접근성 문제가 없다는 뜻이 되어 조용한 거짓 통과가 된다.
+    그래서 점검 실패가 하나라도 있으면 통과를 주지 않고 최소 경고로 올린다.
     """
+    from .a11y import at_or_above, summarize_impacts
     from .models import FAIL, PASS, WARN, ScenarioResult
 
     by_type: dict[str, int] = {}
+    counted: list[dict] = []
     pages_with_issues = 0
+    failed_pages = [p for p in pages if getattr(p, "a11y_error", "")]
+
     for p in pages:
-        if p.a11y:
+        gated = [i for i in p.a11y
+                 if engine != "axe" or at_or_above(i.get("impact", "minor"), min_impact)]
+        if gated:
             pages_with_issues += 1
-        for issue in p.a11y:
+        for issue in gated:
             by_type[issue["type"]] = by_type.get(issue["type"], 0) + 1
+            counted.append(issue)
 
     total = sum(by_type.values())
-    res = ScenarioResult(name="접근성 기본 점검", kind="a11y_check", page="(크롤링 전체)",
-                         description="크롤링한 페이지의 명백한 접근성 위반 점검 (간이·내장)")
+    label = ("axe-core 규칙(WCAG 2.1 A/AA)" if engine == "axe" else "간이·내장 규칙")
+    res = ScenarioResult(name="접근성 점검", kind="a11y_check", page="(크롤링 전체)",
+                         description=f"크롤링한 페이지의 접근성 위반 점검 ({label})")
+
+    if failed_pages:
+        # 검사 자체가 안 된 페이지가 있으면 '위반 없음'이라고 말할 수 없다.
+        res.status = FAIL if severity == "fail" else WARN
+        sample = "; ".join(f"{p.path}: {p.a11y_error}" for p in failed_pages[:3])
+        res.reasons.append(
+            f"접근성 점검 실패 {len(failed_pages)}개 페이지 — 위반 없음이 아니라"
+            f" '확인 불가'입니다. {sample}")
+        if total:
+            res.reasons.append(
+                f"점검된 페이지에서 위반 {total}건 — {summarize_impacts(counted)}")
+        return res
+
     if total == 0:
         res.status = PASS
-        res.reasons.append("발견된 접근성 위반 없음 (간이 점검 기준)")
+        gate = "" if min_impact == "minor" else f", {min_impact} 이상만 집계"
+        res.reasons.append(f"발견된 접근성 위반 없음 ({label} 기준{gate})")
         return res
 
     res.status = FAIL if severity == "fail" else WARN
-    summary = ", ".join(f"{_A11Y_LABEL.get(t, t)} {c}건" for t, c in sorted(by_type.items()))
-    res.reasons.append(
-        f"접근성 위반 {total}건 / {pages_with_issues}개 페이지 — {summary}")
+    if engine == "axe":
+        top = sorted(by_type.items(), key=lambda kv: -kv[1])[:6]
+        summary = ", ".join(f"{t} {c}건" for t, c in top)
+        if len(by_type) > len(top):
+            summary += f" 외 {len(by_type) - len(top)}종"
+        res.reasons.append(
+            f"접근성 위반 {total}건 / {pages_with_issues}개 페이지"
+            f" (심각도: {summarize_impacts(counted)}) — {summary}")
+    else:
+        summary = ", ".join(f"{_A11Y_LABEL.get(t, t)} {c}건"
+                            for t, c in sorted(by_type.items()))
+        res.reasons.append(
+            f"접근성 위반 {total}건 / {pages_with_issues}개 페이지 — {summary}")
     return res
 
 
@@ -386,12 +423,24 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         a11y_scenario = None
         if not infra_error and cfg.a11y.enabled:
-            issues = sum(len(p.a11y) for p in discovery.pages)
+            from .a11y import summarize_impacts
+            issues = [i for p in discovery.pages for i in p.a11y]
+            unchecked = [p for p in discovery.pages if getattr(p, "a11y_error", "")]
             gate = {"info": "정보성 — 리포트 참조", "warn": "경고로 판정",
                     "fail": "실패로 판정"}[cfg.a11y.severity]
-            print(f"   접근성 기본 점검: 이슈 {issues}건 ({gate})")
+            engine_label = ("axe-core (WCAG 2.1 A/AA)" if cfg.a11y.engine == "axe"
+                            else "간이·내장")
+            detail = (f" [{summarize_impacts(issues)}]"
+                      if cfg.a11y.engine == "axe" and issues else "")
+            print(f"   접근성 점검({engine_label}): 이슈 {len(issues)}건{detail} ({gate})")
+            if unchecked:
+                # 조용히 넘기면 '위반 없음'으로 읽힌다. 화면에서도 구분해 알린다.
+                print(f"   ⚠ 접근성 점검 실패 {len(unchecked)}개 페이지 — "
+                      f"위반 없음이 아니라 확인 불가: {unchecked[0].a11y_error}")
             if cfg.a11y.severity != "info":
-                a11y_scenario = _a11y_scenario_result(discovery.pages, cfg.a11y.severity)
+                a11y_scenario = _a11y_scenario_result(
+                    discovery.pages, cfg.a11y.severity,
+                    engine=cfg.a11y.engine, min_impact=cfg.a11y.min_impact)
 
         link_scenario = None
         if not infra_error and cfg.link_check.enabled and discovery.pages:
@@ -511,7 +560,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             meta,
             results,
             blocked,
-            [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y}
+            [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y,
+              "a11y_error": getattr(p, "a11y_error", "")}
              for p in discovery.pages],
             coverage=sweep_coverage,
         )
@@ -534,7 +584,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     diff = diff_for(run_dir.parent, run_dir, {r.name: r.status for r in results},
                     identity=(cfg.target.base_url, cfg.config_path))
     summary = write_reports(run_dir, meta, results, blocked,
-                            [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y}
+                            [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y,
+              "a11y_error": getattr(p, "a11y_error", "")}
                              for p in discovery.pages],
                             diff=diff, coverage=sweep_coverage)
 

@@ -110,6 +110,9 @@ class PageInfo:
     screenshot: str
     elements: dict = field(default_factory=dict)
     a11y: list = field(default_factory=list)
+    # 비어 있지 않으면 '점검 실패'다. 위반 0건과 반드시 구분해야 한다 —
+    # 검사를 못 한 페이지를 깨끗한 페이지로 읽으면 조용한 거짓 통과가 된다.
+    a11y_error: str = ""
 
 
 @dataclass
@@ -118,6 +121,28 @@ class Discovery:
 
     def to_dict(self) -> dict:
         return {"pages": [asdict(p) for p in self.pages]}
+
+
+def _collect_a11y(page, cfg) -> tuple[list, str]:
+    """페이지 접근성 점검. (이슈 목록, 실패 사유) 반환.
+
+    axe 주입이 CSP에 막히거나 실패해도 크롤링 전체를 무너뜨리지 않는다. 대신
+    사유를 그대로 올려보내 '위반 0건'으로 위장되지 않게 한다.
+    """
+    if not cfg.a11y.enabled:
+        return [], ""
+    if cfg.a11y.engine == "builtin":
+        try:
+            return page.evaluate(JS_A11Y), ""
+        except Exception as err:
+            return [], f"간이 점검 실패: {str(err).splitlines()[0][:200]}"
+
+    from .a11y import run_axe
+    result = run_axe(page, tags=cfg.a11y.tags or None,
+                     rules_exclude=cfg.a11y.rules_exclude or None)
+    if result.skipped:
+        return [], ""      # 점검 대상이 아님 — 실패도 위반도 아니다
+    return result.issues, result.error
 
 
 def _same_origin_path(href: str, current_url: str, origin: str) -> str | None:
@@ -178,7 +203,7 @@ def crawl(
                 settle_ms = min(settle_ms, remaining)
             page.wait_for_timeout(max(0, settle_ms))
             inventory = page.evaluate(JS_INVENTORY)
-            a11y_issues = page.evaluate(JS_A11Y) if cfg.a11y.enabled else []
+            a11y_issues, a11y_error = _collect_a11y(page, cfg)
             shot_rel = f"screenshots/discovery_{len(discovery.pages):02d}.jpg"
             save_screenshot(page, run_dir / shot_rel, full_page=True,
                             mask_selectors=cfg.report.mask_selectors)
@@ -186,7 +211,7 @@ def crawl(
                 url=page.url, path=norm,
                 title=inventory.get("title", ""),
                 screenshot=shot_rel, elements=inventory,
-                a11y=a11y_issues,
+                a11y=a11y_issues, a11y_error=a11y_error,
             ))
             if depth < cfg.crawl.max_depth:
                 for link in inventory.get("links", []):

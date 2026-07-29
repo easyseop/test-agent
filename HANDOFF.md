@@ -5,7 +5,7 @@
 >
 > 마지막 갱신: **2026-07-29**
 > 기준 저장소·브랜치: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq`
-> 유닛 테스트 **257개 통과** (커밋·브랜치는 훅이 매 턴 실측 주입 — 문서 값은 참고용)
+> 유닛 테스트 **289개 통과** (커밋·브랜치는 훅이 매 턴 실측 주입 — 문서 값은 참고용)
 
 ---
 
@@ -14,10 +14,10 @@
 ## 0. 핵심 (매 턴 자동 주입 구간)
 
 **현재 위치**: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq` ·
-유닛 테스트 257개 통과. 사용자 최종 목표(설명서→시나리오 생성→봇 실행→결과)는 **실증 완료**.
+유닛 테스트 289개 통과. 사용자 최종 목표(설명서→시나리오 생성→봇 실행→결과)는 **실증 완료**.
 
-**최근 완료**: 멀티 브라우저(`--browser chromium|firefox|webkit`) — 3엔진 실측 검증 완료.
-**대기(사용자 결정)**: axe-core 도입 방식 · Console 결과 보존 정책.
+**최근 완료**: 멀티 브라우저(3엔진 실측) · axe-core 정밀 접근성 점검(기본 `severity: info`).
+**대기(사용자 결정)**: Console 결과 보존 정책.
 **범위 밖**: `knowledge/` 위키 — 사용자 본인의 일. 요청 전까지 손대지 않는다.
 
 **절대 규칙 (세션이 바뀌어도 유효)**
@@ -49,7 +49,7 @@
 ```bash
 cd /home/user/test-agent
 git log --oneline -5 && git status --short     # 어디까지 왔는지
-python3 -m pytest tests/ -q                     # 257 passed 여야 정상
+python3 -m pytest tests/ -q                     # 289 passed 여야 정상
 ```
 
 읽는 순서: **이 문서 → `CLAUDE.md`(규약) → `docs/02-design.md` §5(판정 규칙)**.
@@ -173,6 +173,22 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
   → 문구 대신 **`browser.is_connected()` 생존 확인**으로 판별(§`docs/02-design.md` §5).
   양방향 검증 완료: 죽은 브라우저 → 실행 불가 / 살아있음+없는 요소 → 제품 실패 유지.
 
+### 4-C-3. axe-core 정밀 접근성 점검 (2026-07-29)
+`a11y.engine: axe`(기본) — axe-core 4.12.1 **저장소 동봉**(MPL-2.0, 상업적 사용 무료).
+
+- **CDN 대신 동봉한 이유는 결정성**. CDN을 쓰면 실행 시점마다 규칙이 달라져 판정이 흔들린다.
+- 규칙 100여 개(WCAG 2.1 A/AA) + **한국어 로케일**(axe 공식 `ko.json`) — 위반 설명이 한국어.
+  간이 엔진이 못 하던 `color-contrast`(실제 렌더링 계산 필요) 등이 잡힌다.
+- **기본 `severity: info`** — 게이팅 없음. 도입 첫날 빨간 화면을 보면 팀은 점검을 꺼버린다.
+  `min_impact`(minor→critical)로 심각한 것부터, `rules_exclude`로 규칙별 제외해 점진 승격.
+- ⭐ **핵심 계약: 주입 실패는 '위반 0건'이 아니라 '확인 불가'다.** CSP가 인라인 스크립트를
+  막으면(실제 운영 사이트에서 흔함) axe가 아무것도 못 돈다. 이때 0건으로 보고하면
+  '접근성 문제 없음'이 되어 조용한 거짓 통과다. → 점검 실패가 하나라도 있으면 통과 없음.
+  3엔진 CSP 실측 확인(`Refused to execute inline script` → 전부 '확인 불가' 판정).
+- **적대적 검증에서 거짓 위반 발견 → 수정**: WebKit은 `/export.csv`를 다운로드가 아니라
+  화면에 띄운다. 그래서 **CSV 파일이 '`<title>` 없음·`lang` 없음'으로 잡혔다**(엔진별
+  결과 불일치 1건 vs 3건). → 비-HTML 문서는 점검 대상에서 제외. 이후 3엔진 결과 일치.
+
 ### 4-D. 한 바퀴 실증 ⭐ (사용자 최종 목표)
 `d9c85c0`. **설명서 → 시나리오 자동 생성 → 봇 실행 → 결과**를 실제로 돌렸다.
 
@@ -204,7 +220,7 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
 | Chromium 141 | ✅ 구동(간접) | `p.chromium.launch()` 직접 호출은 revision 불일치로 실패. 엔진의 `find_chromium_executable()` fallback으로 동작 |
 | **Firefox 151** | ✅ **E2E 검증 완료** | `--browser firefox` 정상 18/18 · 버그모드 11/8 |
 | **WebKit 26.5** | ✅ **E2E 검증 완료** | `install-deps webkit`으로 시스템 라이브러리 ~20개 설치 후 성공 |
-| axe-core | ✅ 다운로드 가능 (559KB) | **MPL-2.0 — 상업적 사용 무료.** axe 파일 자체를 수정할 때만 파일 단위 copyleft |
+| axe-core 4.12.1 | ✅ **저장소 동봉 완료** | `webtest_agent/vendor/` (560KB + 한국어 로케일 64KB). MPL-2.0 — 상업적 사용 무료 |
 | Docker | ❌ **차단** | 바이너리는 있으나 데몬 없음(`/var/run/docker.sock` 부재) |
 
 ### ⚠️ 미푸시 커밋 경고 (컨테이너 휘발 시 소실)
@@ -240,7 +256,7 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
 ## 8. 자주 쓰는 명령
 
 ```bash
-python3 -m pytest tests/ -q                              # 257 passed
+python3 -m pytest tests/ -q                              # 289 passed
 fuser -k 5057/tcp 2>/dev/null                            # 떠돌이 데모앱 정리 (실행 전 필수)
 ./scripts/run_demo.sh                                     # 정상 모드 — 전부 통과해야 정상
 ./scripts/run_demo.sh --bug                               # 버그 주입 — 검출 + 종료코드 1이 정상

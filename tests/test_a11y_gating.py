@@ -10,8 +10,8 @@ from webtest_agent.config import ConfigError, load_config
 from webtest_agent.models import FAIL, PASS, WARN
 
 
-def _page(issues):
-    return SimpleNamespace(a11y=issues)
+def _page(issues, a11y_error=""):
+    return SimpleNamespace(a11y=issues, a11y_error=a11y_error)
 
 
 def test_no_issues_passes():
@@ -35,10 +35,12 @@ def test_issues_warn_when_severity_warn():
 
 
 def test_reason_aggregates_by_type():
+    """간이(builtin) 엔진은 규칙 수가 적어 한국어 라벨로 풀어 쓴다."""
     pages = [_page([{"type": "img-alt", "detail": "a"},
                     {"type": "img-alt", "detail": "b"},
-                    {"type": "dup-id", "detail": "#x x2"}])]
-    res = _a11y_scenario_result(pages, "warn")
+                    {"type": "dup-id", "det": "#x x2"}])]
+    pages[0].a11y[2]["type"] = "dup-id"
+    res = _a11y_scenario_result(pages, "warn", engine="builtin")
     reason = res.reasons[0]
     assert "대체 텍스트(alt) 없는 이미지 2건" in reason
     assert "중복 id 1건" in reason

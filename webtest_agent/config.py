@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from .a11y import IMPACT_ORDER
 from .safety import (HARD_BLOCK_PATTERNS, merge_avoid_patterns,
                      validate_read_only_sql)
 
@@ -266,13 +267,25 @@ class LinkCheckConfig:
 
 @dataclass
 class A11yConfig:
-    """접근성 기본 점검(간이·내장) — 크롤링한 페이지 대상.
+    """접근성 점검 — 크롤링한 페이지 대상.
 
-    severity: info(기본, 정보성 — 판정 영향 없음) | warn(이슈 있으면 경고) |
-    fail(이슈 있으면 실패). axe 수준의 정밀 검사는 아니며, 명백한 위반만 잡는다.
+    engine: axe(기본, 동봉한 axe-core 4.x — WCAG 2.1 AA 규칙 100여 개) |
+            builtin(간이 내장 규칙 9종 — axe를 못 쓰는 환경의 대비책)
+    severity: info(기본, 정보성 — 판정 영향 없음) | warn(경고) | fail(실패)
+    min_impact: 게이팅에 셀 최소 심각도(minor/moderate/serious/critical).
+        severity가 warn/fail일 때만 의미가 있다. 규칙 100여 개를 한꺼번에
+        실패로 걸면 기존 운영이 전부 빨개지므로, 심각한 것부터 올리라는 뜻.
+    rules_exclude: 끄고 싶은 axe 규칙 id 목록(예: color-contrast).
+
+    기본이 info인 이유: 도입 첫날 빨간 화면을 보면 팀은 점검 자체를 꺼버린다.
+    먼저 보이게 하고, 합의된 규칙부터 fail로 승격하는 편이 실제로 고쳐진다.
     """
     enabled: bool = False
+    engine: str = "axe"
     severity: str = "info"
+    min_impact: str = "minor"
+    rules_exclude: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)   # 비우면 WCAG 2.1 A/AA 기본
 
 
 @dataclass
@@ -579,8 +592,19 @@ def load_config(path: str | Path) -> AgentConfig:
     a11y_severity = str(a11y_raw.get("severity", "info"))
     if a11y_severity not in ("info", "warn", "fail"):
         raise ConfigError("a11y.severity는 info, warn, fail 중 하나여야 합니다")
+    a11y_engine = str(a11y_raw.get("engine", "axe")).strip().lower() or "axe"
+    if a11y_engine not in ("axe", "builtin"):
+        raise ConfigError("a11y.engine은 axe 또는 builtin이어야 합니다")
+    a11y_min_impact = str(a11y_raw.get("min_impact", "minor")).strip().lower() or "minor"
+    if a11y_min_impact not in IMPACT_ORDER:
+        raise ConfigError(
+            f"a11y.min_impact는 {', '.join(IMPACT_ORDER)} 중 하나여야 합니다")
     a11y = A11yConfig(enabled=bool(a11y_raw.get("enabled", False)),
-                      severity=a11y_severity)
+                      engine=a11y_engine,
+                      severity=a11y_severity,
+                      min_impact=a11y_min_impact,
+                      rules_exclude=[str(r) for r in (a11y_raw.get("rules_exclude") or [])],
+                      tags=[str(t) for t in (a11y_raw.get("tags") or [])])
 
     lc_raw = _sub(data, "link_check")
     lc_severity = str(lc_raw.get("severity", "fail"))
