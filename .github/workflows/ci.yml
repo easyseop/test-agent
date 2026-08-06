@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install with pinned constraints
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[db,dev]" -c constraints.txt
+      - name: Unit tests
+        run: python -m pytest tests/ -q
+
+  demo-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install with pinned constraints
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[db,dev]" -c constraints.txt
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      # A stale demo app on port 5057 has produced false "all passed" readings
+      # before, so the port is cleared before every mode.
+      - name: Normal mode must pass completely
+        run: |
+          fuser -k 5057/tcp 2>/dev/null || true
+          ./scripts/run_demo.sh
+
+      - name: Bug mode must detect failures (exit code 1 is the pass condition)
+        run: |
+          fuser -k 5057/tcp 2>/dev/null || true
+          set +e
+          ./scripts/run_demo.sh --bug
+          status=$?
+          set -e
+          if [ "$status" -ne 1 ]; then
+            echo "expected exit code 1 from seeded bugs, got $status" >&2
+            exit 1
+          fi
+
+      - name: Unreachable target must report infrastructure error (exit code 2)
+        run: |
+          fuser -k 5057/tcp 2>/dev/null || true
+          set +e
+          python -m webtest_agent run -c configs/demo-deadline.yaml
+          status=$?
+          set -e
+          if [ "$status" -ne 2 ]; then
+            echo "expected exit code 2 for an unusable run, got $status" >&2
+            exit 1
+          fi
+
+      - name: Runs directory must not retain authentication state
+        run: |
+          if find runs -name 'auth_state*.json' -print -quit | grep -q .; then
+            echo "authentication state leaked into shared run artifacts" >&2
+            exit 1
+          fi

@@ -7,3 +7,6 @@ demo_app/demo.db
 .venv/
 # 시각 회귀 기준선 — 환경(폰트·렌더링) 종속. 팀에서 단일 환경 기준선을 공유하려면 아래 줄을 제거하고 커밋
 baselines/
+*.egg-info/
+build/
+dist/

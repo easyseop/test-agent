@@ -1,0 +1,33 @@
+# Pinned resolution for reproducible Runner installs.
+#
+#   python3 -m pip install -e ".[db,dev]" -c constraints.txt
+#   python3 -m playwright install chromium
+#
+# Why this file exists: `requirements.txt` used open `>=` ranges, so two machines
+# installing on different days got different Playwright builds. Playwright pins the
+# browser revision it expects, so a version drift shows up as "browser not found"
+# or a revision mismatch rather than an obvious dependency error.
+#
+# Regenerate after a deliberate upgrade:
+#   python3 -m pip install -e ".[db,dev]" --upgrade && python3 -m pip freeze > constraints.txt
+# then re-run `python3 -m playwright install chromium` and the demo suites.
+#
+# Verified on Python 3.11.15 / 3.12 with Chromium 141.
+Flask==3.1.3
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+PyYAML==6.0.3
+SQLAlchemy==2.0.51
+Werkzeug==3.1.8
+blinker==1.9.0
+click==8.4.2
+greenlet==3.5.4
+iniconfig==2.3.0
+itsdangerous==2.2.0
+packaging==26.3
+pillow==12.3.0
+playwright==1.56.0
+pluggy==1.6.0
+pyee==13.0.1
+pytest==9.1.1
+typing_extensions==4.16.0

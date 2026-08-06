@@ -1,6 +1,13 @@
-playwright>=1.45
-flask>=3.0
-pyyaml>=6.0
-pillow>=10.0       # 시각 회귀(픽셀 비교)
-pytest>=8.0        # 개발/테스트용
-sqlalchemy>=2.0    # 선택: SQLite 외 DB(UI↔DB 대조) 사용 시. 드라이버는 별도 (psycopg2-binary / pymysql)
+# Kept for existing scripts. New installs should use the package metadata:
+#
+#   python3 -m pip install -e ".[db,dev]" -c constraints.txt
+#
+# constraints.txt pins the exact resolution, including the Playwright version whose
+# browser revision the runner expects. Installing from these open ranges alone gives
+# a different Playwright on a different day, which surfaces as a missing browser.
+playwright>=1.45,<2
+flask>=3.0,<4
+pyyaml>=6.0,<7
+pillow>=10.0,<13    # visual regression (pixel comparison)
+pytest>=8.0,<10     # development and tests
+sqlalchemy>=2.0,<3  # optional: non-SQLite databases for UI-to-DB comparison
