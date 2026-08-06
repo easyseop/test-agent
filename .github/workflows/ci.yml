@@ -1,9 +1,10 @@
 name: CI
 
+# Every branch, not a default-branch allowlist. This repository's line of
+# development is a working branch, so pinning the trigger to `main` would leave CI
+# silent on exactly the pushes that matter.
 on:
   push:
-    branches:
-      - main
   pull_request:
 
 permissions:
