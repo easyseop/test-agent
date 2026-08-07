@@ -78,9 +78,21 @@ jobs:
             exit 1
           fi
 
-      - name: Runs directory must not retain authentication state
+      # The check below is only meaningful after a run that actually logs in.
+      # Without this step nothing would ever create storage state, so the leak
+      # assertion would pass vacuously.
+      # run_demo.sh supplies the demo fixture password itself; no credential is
+      # written into this workflow.
+      - name: Authenticated mode must pass
         run: |
-          if find runs -name 'auth_state*.json' -print -quit | grep -q .; then
+          fuser -k 5057/tcp 2>/dev/null || true
+          ./scripts/run_demo.sh --auth
+
+      - name: Runs directory must not retain authentication state
+        if: always()
+        run: |
+          if [ -d runs ] && find runs -name 'auth_state*' -print -quit | grep -q .; then
             echo "authentication state leaked into shared run artifacts" >&2
+            find runs -name 'auth_state*' >&2
             exit 1
           fi
