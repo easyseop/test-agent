@@ -11,7 +11,9 @@ from urllib.parse import urljoin, urlparse
 from .browser import BrowserSession, save_screenshot
 from .config import AgentConfig
 
-JS_INVENTORY = """() => {
+# raw 문자열이어야 한다. 안의 JS 정규식 `/\s+/`를 Python 이스케이프로 해석하면
+# 지금은 DeprecationWarning이고 이후 Python에서는 SyntaxError가 된다.
+JS_INVENTORY = r"""() => {
   function cssPath(el) {
     if (el.id) return '#' + CSS.escape(el.id);
     const parts = [];
@@ -160,6 +162,16 @@ def _same_origin_path(href: str, current_url: str, origin: str) -> str | None:
     return path
 
 
+def crawl_start_path(base_url: str) -> str:
+    """크롤링을 시작할 경로. base_url이 하위 경로를 가리키면 거기서 시작한다.
+
+    `/admin`, `/wiki`처럼 하위 경로에 붙은 앱을 base_url로 지정했을 때 "/"에서
+    시작하면 앱 바깥을 크롤링하게 된다. Playwright의 context base_url은 "/"를
+    origin 기준으로 풀기 때문에, 여기서 명시하지 않으면 경로가 통째로 버려진다.
+    """
+    return urlparse(base_url).path or "/"
+
+
 def crawl(
     session: BrowserSession,
     cfg: AgentConfig,
@@ -171,11 +183,12 @@ def crawl(
     parsed_base = urlparse(base)
     origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
     excludes = [re.compile(p) for p in cfg.crawl.exclude_patterns]
+    start_path = crawl_start_path(base)
 
     discovery = Discovery()
     ctx, page, _monitor = session.new_context(base)
     try:
-        queue: list[tuple[str, int]] = [("/", 0)]
+        queue: list[tuple[str, int]] = [(start_path, 0)]
         seen: set[str] = set()
         while queue and len(discovery.pages) < cfg.crawl.max_pages:
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
