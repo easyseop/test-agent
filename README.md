@@ -4,6 +4,8 @@
 
 실행 엔진은 100% 결정적(LLM·API 키 불필요)이며, 실패 시 종료코드 1을 반환해 CI 게이트로 쓸 수 있습니다.
 
+> **바로 써보려면:** 설치부터 결과 읽는 법까지 한 장으로 정리한
+> [빠른 시작](QUICKSTART.md)을 보세요.
 > **처음 사용하는 분:** 개발 용어 없이 준비물부터 결과 읽는 법까지 설명한
 > [비개발자용 사용자 가이드](docs/USER_GUIDE.md)를 먼저 보세요.
 > 테스트 목적과 합격 기준은 [테스트 계획](docs/TEST_PLAN.md)에 정리합니다.
@@ -32,7 +34,7 @@
 | 작은 화면에서 안 깨지는가 | `responsive_checks` — 여러 뷰포트 폭에서 가로 오버플로(`scrollWidth > clientWidth`) 검출, 원인 요소 지목 | 오버플로 → **실패** (결정적 불변식) |
 | 링크가 살아 있는가 | `link_check` — 크롤링으로 발견한 링크의 HTTP 상태 전수 점검(같은 출처 기본) | 4xx/5xx/연결 실패 → **실패** (severity 선택) |
 | 로드가 빠른가 | `perf_checks` — 페이지 로드 지표(load/DCL/FCP/response)를 예산(ms)과 비교 | 예산 초과 → **실패** (결정적) |
-| 접근성 기본 상태 | `a11y.enabled` — alt·라벨·중복 id·제목 레벨·tabindex·main 랜드마크·표 헤더 등 간이 점검 | `a11y.severity`: info(기본·정보성) / warn / fail 로 판정 게이팅 선택 |
+| 접근성 기본 상태 | `a11y.enabled` — 동봉한 axe-core(WCAG 2.1 AA 규칙, 한국어 로케일)를 페이지에 주입해 점검. 폐쇄망에서도 같은 버전으로 동작 | `a11y.severity`: info(기본·정보성) / warn / fail 로 판정 게이팅 선택 |
 | 위험 버튼 안전장치 | 자동 스윕은 저장·삭제·결제·발송·로그아웃 등을 설정과 실행 양쪽에서 차단 | 이유와 함께 리포트에 기록 |
 
 또한 매 실행마다 **직전 실행과 비교(diff)** 해 "신규 실패 / 복구 / 계속 실패"를 리포트와 CLI에 표시하고, `target.flaky_recheck: true`면 실패 시나리오를 1회 재실행해 간헐(flaky) 의심을 경고로 구분하며, `notify.webhook_url`을 설정하면 실행 결과를 **웹훅(Slack Incoming Webhook 호환)** 으로 전송합니다.
@@ -49,7 +51,7 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 ## 빠른 시작 (동봉 데모앱)
 
 ```bash
-./scripts/run_demo.sh          # 읽기 전용 기본 모드 → 19개 통과, 위험 동작 차단 기록
+./scripts/run_demo.sh          # 읽기 전용 기본 모드 → 실패 0건, 위험 동작 차단 기록
 ./scripts/run_demo.sh --write  # 시드 DB 주문 등록 검증을 명시적으로 승인
 ./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 6건 검출 (종료코드 1이 정상)
 ./scripts/run_demo.sh --auth   # 로그인 모드 → 10개 통과 + 인증 상태 자동 삭제
@@ -178,7 +180,7 @@ spec_checks:
 - 값 마스킹은 **스텝 기록·스크린샷**에 적용 — `${환경변수}`로 넣은 값과 비밀번호·토큰 입력은 리포트에 `***`로 남지만, **비디오·트레이스에는 입력 과정이 그대로 녹화**됩니다 (공유 범위 주의)
 - 위험 동작 차단 목록은 단어 매칭 최후 안전망입니다 — 목록에 없는 어휘(사내 용어 등)는 막히지 않으므로 `avoid_patterns`로 보강하세요
 - 정답원 SQL 가드는 보수적 문자열 검사입니다 — 함수 호출까지 완전히 막지 못하므로 **DB 계정 자체를 read-only로 두는 것이 본 방어선**입니다
-- 접근성 점검은 간이 내장 검사 (axe 수준 아님 — 정보성)
+- 접근성은 axe-core의 자동 판정 가능 규칙만 봅니다 — 실제 접근성 문제의 일부일 뿐이고, 기본 severity가 `info`라 판정에 영향을 주지 않습니다 (게이팅하려면 warn/fail로)
 - 시각 회귀 기준선(`baselines/`)은 실행 환경(폰트·렌더링)에 종속 — 같은 환경에서 생성·비교하고, 팀 공유 시 CI 등 단일 환경에서 생성할 것
 
 로드맵과 백로그는 [docs/02-design.md](docs/02-design.md) §13, 검토 배경은 [docs/01-review.md](docs/01-review.md) 참조.
