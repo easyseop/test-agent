@@ -158,3 +158,6 @@ class RunMeta:
     agent_version: str = ""
     status: str = "running"       # running | passed | failed | infra_error
     error: str = ""               # 실행 불가 사유 (infra_error일 때)
+    # 쓰기 검증 전 데이터 초기화 기록. 되돌리지 않은 데이터 위에서 낸 판정인지
+    # 아닌지는 결과를 읽는 사람이 반드시 알아야 한다.
+    write_reset: dict = field(default_factory=dict)

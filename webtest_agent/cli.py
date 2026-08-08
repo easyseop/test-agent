@@ -16,6 +16,7 @@ from .history import diff_for
 from .models import FAIL, STATUS_LABEL, WARN, RunMeta
 from .notify import build_payload, send_webhook
 from .report import write_reports
+from .reset import ResetFailed, ResetOutcome, run_write_reset
 from .runner import BrowserGoneError, Runner
 from .scenarios import (build_data_checks, build_spec_checks, build_sweep,
                         block_write_checks, build_perf_checks,
@@ -347,6 +348,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     blocked = []
     results = []
     sweep_coverage: dict = {}
+    reset_outcome = ResetOutcome()
     infra_error = ""
 
     # 브라우저 기동 실패처럼 판정 이전 단계의 예외는 '제품 실패'가 아니라
@@ -407,6 +409,25 @@ def cmd_run(args: argparse.Namespace) -> int:
             infra_error = _deadline_error(
                 deadline, cfg.target.run_timeout_ms, "대상 접속 확인"
             )
+
+        # 초기화는 데이터를 지운다. 크롤링·시나리오보다 먼저, 승인이 있을 때만
+        # 수행한다. 실패하면 판정으로 넘어가지 않는다 — 되돌려지지 않은 데이터
+        # 위에서 내린 합격·불합격은 그 자체가 거짓이다.
+        if not infra_error and cfg.write_reset:
+            try:
+                reset_outcome = run_write_reset(
+                    cfg.write_reset,
+                    allow_write_checks=allow_write_checks,
+                    base_url=cfg.target.base_url,
+                    config_dir=Path(cfg.config_path).resolve().parent,
+                )
+            except ResetFailed as err:
+                infra_error = str(err)
+            else:
+                if reset_outcome.performed:
+                    print(f"⓪ 데이터 초기화 수행: {reset_outcome.detail}")
+                elif reset_outcome.skipped_reason:
+                    print(f"   ⛔ 초기화 건너뜀 — {reset_outcome.skipped_reason}")
 
         if not infra_error and cfg.crawl.enabled:
             print("① 페이지 크롤링·요소 인벤토리 수집 중...")
@@ -551,6 +572,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     meta.finished_at = _now()
     meta.duration_ms = int((_time.monotonic() - t0) * 1000)
+    meta.write_reset = reset_outcome.to_dict()
 
     if infra_error:
         meta.status = "infra_error"

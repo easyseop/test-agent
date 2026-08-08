@@ -381,6 +381,30 @@ class ReportConfig:
 
 
 @dataclass
+class WriteResetConfig:
+    """쓰기 검증 전 데이터 되돌리기.
+
+    주문을 넣으면 데이터가 남아 다음 실행의 건수 검사가 거짓으로 깨진다.
+    초기화 없이는 쓰기 검증을 반복할 수 없다.
+
+    데이터를 지우는 동작이므로 `--allow-write-checks` 승인 없이는 실행하지
+    않는다. 실패는 판정이 아니라 실행 불가(infra_error)다 — 초기화가 안 된
+    상태에서 합격·불합격을 말하면 안 되기 때문이다.
+    """
+    http_url: str = ""
+    http_method: str = "POST"
+    http_headers: dict[str, str] = field(default_factory=dict)
+    command: list[str] = field(default_factory=list)
+    timeout_ms: int = 30000
+
+    @property
+    def describe(self) -> str:
+        if self.http_url:
+            return f"{self.http_method} {self.http_url}"
+        return " ".join(self.command)
+
+
+@dataclass
 class AgentConfig:
     target: TargetConfig
     crawl: CrawlConfig
@@ -396,6 +420,7 @@ class AgentConfig:
     link_check: LinkCheckConfig = field(default_factory=LinkCheckConfig)
     auth: AuthConfig | None = None
     notify: NotifyConfig | None = None
+    write_reset: WriteResetConfig | None = None
     baselines_dir: str = "baselines"
     output_dir: str = "runs"
     config_path: str = ""
@@ -710,6 +735,53 @@ def load_config(path: str | Path) -> AgentConfig:
             on=on,
         )
 
+    write_reset: WriteResetConfig | None = None
+    wr_raw = data.get("write_reset")
+    if wr_raw:
+        if not isinstance(wr_raw, dict):
+            raise ConfigError("write_reset: 매핑이어야 합니다")
+        if not writes:
+            raise ConfigError(
+                "write_reset: write_checks가 없는데 초기화만 정의했습니다. "
+                "쓰기 검증 없이 데이터를 지우는 설정은 사고를 부릅니다")
+        http_raw = wr_raw.get("http")
+        cmd_raw = wr_raw.get("command")
+        if bool(http_raw) == bool(cmd_raw):
+            raise ConfigError("write_reset: http 또는 command 중 정확히 하나를 지정하세요")
+
+        http_url = ""
+        http_method = "POST"
+        http_headers: dict[str, str] = {}
+        command: list[str] = []
+        if http_raw:
+            if not isinstance(http_raw, dict) or not http_raw.get("url"):
+                raise ConfigError("write_reset.http: url이 필요합니다")
+            http_method = str(http_raw.get("method", "POST")).upper()
+            if http_method not in ("POST", "PUT", "DELETE"):
+                raise ConfigError(
+                    "write_reset.http.method는 POST, PUT, DELETE 중 하나여야 합니다 "
+                    "(초기화는 상태를 바꾸는 요청입니다)")
+            http_url = _expand_env(str(http_raw["url"]), "write_reset.http.url")
+            http_headers = {
+                str(k): _expand_env(str(v), f"write_reset.http.headers.{k}")
+                for k, v in (http_raw.get("headers") or {}).items()
+            }
+        else:
+            # 문자열을 셸에 넘기지 않는다. 리스트로만 받아 셸 확장·연쇄 실행을 원천 차단한다.
+            if not isinstance(cmd_raw, list) or not cmd_raw:
+                raise ConfigError(
+                    "write_reset.command: 인자 목록이어야 합니다 "
+                    "(예: ['python', 'seed.py']). 문자열은 셸을 거치므로 받지 않습니다")
+            command = [_expand_env(str(part), "write_reset.command") for part in cmd_raw]
+
+        timeout_ms = int(wr_raw.get("timeout_ms", 30000))
+        if timeout_ms <= 0:
+            raise ConfigError("write_reset.timeout_ms는 1ms 이상이어야 합니다")
+        write_reset = WriteResetConfig(
+            http_url=http_url, http_method=http_method, http_headers=http_headers,
+            command=command, timeout_ms=timeout_ms,
+        )
+
     a11y_raw = _sub(data, "a11y")
     a11y_severity = str(a11y_raw.get("severity", "info"))
     if a11y_severity not in ("info", "warn", "fail"):
@@ -771,6 +843,7 @@ def load_config(path: str | Path) -> AgentConfig:
         link_check=link_check,
         auth=auth,
         notify=notify,
+        write_reset=write_reset,
         baselines_dir=str(data.get("baselines_dir", "baselines")),
         output_dir=str(data.get("output_dir", "runs")),
         config_path=str(p),
