@@ -57,6 +57,7 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 ./scripts/run_demo.sh --auth   # 로그인 모드 → 10개 통과 + 인증 상태 자동 삭제
 ./scripts/run_demo.sh --load-error  # 첫 화면 로드 오류 1건 검출 (종료코드 1이 정상)
 ./scripts/run_demo.sh --deadline  # 전체 제한 초과 → 실행 불가·종료코드 2
+./scripts/run_demo.sh --frames  # iframe·새 창·파일 첨부·마우스 동작 시연
 ```
 
 버그 주입 모드(`DEMO_BUG=1`)의 검출 예시:
@@ -99,7 +100,7 @@ data_checks:
   - name: 상태필터-shipped
     description: 상태를 shipped로 필터하면 shipped 주문만 표시되어야 한다   # ← 근거는 앱 '설명서'의 의도
     page: /
-    steps:                                   # 스텝 DSL: goto/click/fill/select/check/press/wait_for/wait_ms
+    steps:                                   # 스텝 DSL: goto/click/fill/select/check/press/wait_for/wait_ms/extract/upload/hover/scroll_to/drag/wait_popup/close_popup
       - {action: select, selector: "#status", value: "shipped"}
       - {action: click,  selector: "#apply"}
       - {action: wait_for, selector: "#orders-table"}
@@ -182,7 +183,7 @@ spec_checks:
 - 정답원 SQL 가드는 보수적 문자열 검사입니다 — 함수 호출까지 완전히 막지 못하므로 **DB 계정 자체를 read-only로 두는 것이 본 방어선**입니다
 - 접근성은 axe-core의 자동 판정 가능 규칙만 봅니다 — 실제 접근성 문제의 일부일 뿐이고, 기본 severity가 `info`라 판정에 영향을 주지 않습니다 (게이팅하려면 warn/fail로)
 - 시각 회귀 기준선(`baselines/`)은 실행 환경(폰트·렌더링)에 종속 — 같은 환경에서 생성·비교하고, 팀 공유 시 CI 등 단일 환경에서 생성할 것
-- 스텝 DSL이 아직 못 하는 동작이 있습니다 — 화면 값 추출·재사용, iframe·팝업·새 탭, 파일 업로드·호버·드래그, 반복 실행, 2FA(TOTP)·메일 인증. **이 한계들을 없애는 설계는 [docs/03-capability-roadmap.md](docs/03-capability-roadmap.md)에 확정돼 있습니다** (CAPTCHA 우회·실카드 결제는 영구 범위 밖)
+- 스텝 DSL이 아직 못 하는 동작 — 반복 실행(foreach), 2FA(TOTP)·메일 인증. **설계는 [docs/03-capability-roadmap.md](docs/03-capability-roadmap.md)에 확정돼 있습니다** (CAPTCHA 우회·실카드 결제는 영구 범위 밖). 화면 값 추출·재사용, iframe·새 창, 파일 업로드·마우스 동작은 구현 완료입니다
 
 로드맵과 백로그는 [docs/02-design.md](docs/02-design.md) §13, 검토 배경은 [docs/01-review.md](docs/01-review.md) 참조.
 개발 재개 상태와 다음 작업은 [HANDOFF.md](HANDOFF.md)를 기준으로 확인합니다.

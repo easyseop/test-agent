@@ -67,6 +67,12 @@ class _Page:
             def first(self):
                 return self
 
+            def wait_for(self, state=None, timeout=None):
+                # 프레임 안에서도 쓸 수 있도록 Runner가 locator.wait_for를 쓴다.
+                if state == "hidden" and not page._hidden_ok:
+                    raise TimeoutError("still visible")
+                return None
+
             def inner_text(self, timeout=None):
                 return page._text
         return _Loc()

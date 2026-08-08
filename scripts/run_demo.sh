@@ -7,6 +7,7 @@
 #   ./scripts/run_demo.sh --update-baselines  # 의도된 데모 화면 기준선 갱신
 #   ./scripts/run_demo.sh --load-error  # 첫 화면 로드 오류 검출(종료코드 1이 정상)
 #   ./scripts/run_demo.sh --deadline  # 전체 실행 제한 초과(종료코드 2가 정상)
+#   ./scripts/run_demo.sh --frames  # iframe·새 창·파일 첨부·마우스 동작 시연
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -35,8 +36,11 @@ for arg in "$@"; do
       DEADLINE=1
       CONFIG=configs/demo-deadline.yaml
       ;;
+    --frames)
+      CONFIG=configs/demo-frames.yaml
+      ;;
     *)
-      echo "지원하지 않는 옵션: $arg (--bug, --auth, --write, --update-baselines, --load-error, --deadline 중 선택)" >&2
+      echo "지원하지 않는 옵션: $arg (--bug, --auth, --write, --update-baselines, --load-error, --deadline, --frames 중 선택)" >&2
       exit 2
       ;;
   esac

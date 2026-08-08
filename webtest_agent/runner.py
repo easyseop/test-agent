@@ -74,6 +74,13 @@ def describe_step(step: Step) -> str:
     """스텝 설명 — 리포트·절차서에 그대로 실리므로 비밀값은 마스킹된 값을 쓴다."""
     sel = f"'{step.selector}'"
     val = step.log_value
+    text = _describe_action(step, sel, val)
+    if step.frame:
+        text += f" (프레임 '{step.frame}' 안에서)"
+    return text
+
+
+def _describe_action(step: Step, sel: str, val: str | None) -> str:
     return {
         "goto": f"{val} 페이지로 이동한다",
         "click": f"{sel} 요소를 클릭한다",
@@ -89,6 +96,12 @@ def describe_step(step: Step) -> str:
         "assert_not_visible": f"{sel} 요소가 화면에 보이지 않는지 확인한다",
         "assert_not_text": f"{sel} 요소에 '{val}' 텍스트가 없는지 확인한다",
         "extract": f"{sel}의 값을 읽어 '{step.store_as}'에 담는다",
+        "wait_popup": "새 창이 열릴 때까지 기다렸다가 그 창으로 옮긴다",
+        "close_popup": "새 창을 닫고 원래 창으로 돌아온다",
+        "upload": f"{sel}에 파일 '{val}'을 올린다",
+        "hover": f"{sel} 위에 마우스를 올린다",
+        "scroll_to": f"{sel}이 보이도록 스크롤한다",
+        "drag": f"{sel}을 '{val}' 위로 끌어다 놓는다",
     }[step.action]
 
 
@@ -136,6 +149,12 @@ JS_PERF = """(metric) => {
   const v = t[metric];
   return { value: (v === undefined || v === null) ? -1 : v, note: '' };
 }"""
+
+
+# 승인 없이 실행하면 안 되는 동작 — 클릭과 끌어놓기는 무언가를 '실행'시킨다.
+# hover·scroll_to는 상태를 바꾸지 않고, upload는 파일을 고르기만 하며 실제 제출은
+# 뒤따르는 click이 하므로 그 click에서 걸린다.
+_GUARDED_ACTIONS = {"click", "drag"}
 
 
 def _dom_size(page) -> int:
@@ -195,6 +214,63 @@ class Runner:
             if value:
                 text = text.replace(value, MASK)
         return text
+
+    # ── 새 창(팝업)과 iframe ─────────────────────────────────────
+    #
+    # 결제창·소셜 로그인은 별도 창으로, 주소검색·PG 입력폼은 iframe으로 뜬다.
+    # 둘 다 "지금 조작할 문서가 어디냐"의 문제라 한곳에서 다룬다.
+
+    def _ensure_pages(self) -> None:
+        if "_page_stack" not in self.__dict__:
+            self._page_stack: list = []
+
+    def _reset_pages(self) -> None:
+        self._page_stack = []
+
+    def _active_page(self, page):
+        """지금 조작 대상인 페이지. 새 창을 열었으면 그 창이다."""
+        self._ensure_pages()
+        return self._page_stack[-1] if self._page_stack else page
+
+    def _close_popups(self, monitor=None) -> None:
+        """시나리오가 끝나면 열어 둔 창을 모두 닫는다.
+
+        닫지 않으면 다음 시나리오가 남의 창에서 실행돼 결과가 오염된다.
+        """
+        self._ensure_pages()
+        while self._page_stack:
+            popup = self._page_stack.pop()
+            try:
+                popup.close()
+            except Exception:
+                pass
+        if monitor is None:
+            return
+        # 정리 경로에서 예외가 나면 원래 실패 원인을 덮어쓴다. 모니터가 이 속성을
+        # 갖고 있다는 보장에 기대지 않는다.
+        try:
+            monitor.hold_popups = False
+        except Exception:
+            pass
+        leftovers = getattr(monitor, "captured_popups", None)
+        if not leftovers:
+            return
+        for leftover in leftovers:
+            try:
+                leftover.close()
+            except Exception:
+                pass
+        leftovers.clear()
+
+    def _scope(self, page, step: Step, frame: str | None):
+        """스텝이 조작할 대상 — 페이지 자체이거나 그 안의 iframe."""
+        target = self._active_page(page)
+        if not frame:
+            return target
+        # 'iframe#a >> iframe#b'는 중첩 프레임이다. 바깥부터 차례로 들어간다.
+        for part in [p.strip() for p in frame.split(">>") if p.strip()]:
+            target = target.frame_locator(part)
+        return target
 
     def _query_params(self, query) -> dict[str, str]:
         """정답 쿼리에 넘길 바인딩 값 — 변수 치환은 여기서만 일어난다."""
@@ -297,9 +373,16 @@ class Runner:
         elif scenario.kind != "write_check":
             # 사람이 적은 스텝이라도 되돌릴 수 없는 동작은 승인 없이 실행하지 않는다.
             # (승인받은 write_check만 예외 — 위 kind 분기에서 제외됨)
+            #
+            # 검사 대상은 '무언가를 실행시키는' 동작이다. drag는 끌어다 놓는 위치가
+            # 휴지통일 수 있으므로 목적지(value)까지 본다. frame·팝업 안이라고 해서
+            # 이 검사를 건너뛰지 않는다 — 결제창 안의 '결제하기'도 똑같이 막아야 한다.
             hit = next(
-                (h for step in scenario.steps if step.action == "click"
-                 and (h := find_destructive(step.selector))),
+                (h for step in scenario.steps
+                 if step.action in _GUARDED_ACTIONS
+                 and (h := find_destructive(step.selector,
+                                            step.value if step.action == "drag" else None,
+                                            step.frame))),
                 None,
             )
             if hit:
@@ -314,7 +397,8 @@ class Runner:
         slug = f"{index:02d}_{slugify(scenario.name)}" + (f"_{suffix}" if suffix else "")
         shots_dir = self.run_dir / "screenshots" / slug
         video_tmp = (self.run_dir / "videos" / f"_tmp_{slug}") if self.cfg.report.video else None
-        ctx = page = video = None
+        # finally에서 창 정리에 쓰므로 컨텍스트 생성이 실패해도 이름이 있어야 한다.
+        ctx = page = video = monitor = None
         hard_fail = False
 
         try:
@@ -335,6 +419,11 @@ class Runner:
             base_dialog = len(monitor.dialogs)
             base_down = len(monitor.downloads)
             base_popup = len(monitor.popups)
+            # 새 창을 쓰는 시나리오만 창을 붙잡아 둔다. 자동 스윕이 연 창까지
+            # 남겨두면 창이 쌓여 다음 시나리오를 오염시킨다.
+            monitor.hold_popups = any(s.action == "wait_popup" for s in scenario.steps)
+            self._reset_pages()
+
             pre_nav = monitor.navigations
             pre_url = page.url
             pre_dom = _dom_size(page)
@@ -354,15 +443,17 @@ class Runner:
                                 value=step.log_value, description=describe_step(step))
                 t0 = time.monotonic()
                 try:
-                    self._exec_step(page, step, record=sr)
-                    self._wait(page, self.cfg.target.settle_ms)
-                    sr.screenshot = self._rel(self._shot(page, shots_dir / f"step{i:02d}.jpg"))
+                    self._exec_step(page, step, record=sr, monitor=monitor)
+                    self._wait(self._active_page(page), self.cfg.target.settle_ms)
+                    sr.screenshot = self._rel(
+                        self._shot(self._active_page(page), shots_dir / f"step{i:02d}.jpg"))
                 except RunDeadlineExceeded:
                     raise
                 except Exception as err:
                     sr.status = "fail"
                     sr.error = self._mask_vars(_scrub(_short(err), step))
-                    sr.screenshot = self._rel(self._shot(page, shots_dir / f"step{i:02d}_fail.jpg"))
+                    sr.screenshot = self._rel(
+                        self._shot(self._active_page(page), shots_dir / f"step{i:02d}_fail.jpg"))
                     res.steps.append(sr)
                     res.reasons.append(f"스텝 {i} 실패 — {sr.description}: {sr.error}")
                     step_failed = True
@@ -443,6 +534,8 @@ class Runner:
             hard_fail = True
             res.reasons.append(f"실행 오류: {_short(err)}")
         finally:
+            # 남은 창을 닫지 않으면 다음 시나리오가 남의 창에서 실행돼 결과가 오염된다.
+            self._close_popups(monitor)
             if ctx is not None:
                 if page is not None and self.cfg.report.video:
                     video = page.video
@@ -471,12 +564,13 @@ class Runner:
         self._verdict(res, scenario, hard_fail)
         return res
 
-    def _exec_step(self, page, step: Step, record=None) -> None:
+    def _exec_step(self, page, step: Step, record=None, monitor=None) -> None:
         action = step.action
         # 셀렉터·값의 `{{변수}}`는 실행 시점에 푼다. 설정 로딩 시점에 푸는
         # `${환경변수}`와 달리 이 값은 방금 화면에서 읽은 것이다.
         selector = self._resolve(step.selector)
         value = self._resolve(step.value)
+        frame = self._resolve(step.frame)
         # 절차서·리포트는 재현 문서다. 변수를 쓴 스텝은 원문이 아니라 그때 실제로
         # 쓰인 값을 남겨야 나중에 무슨 값이었는지 알 수 있다.
         if record is not None:
@@ -485,8 +579,20 @@ class Runner:
             if value != step.value:
                 record.value = MASK if step.secret else value
                 record.description = describe_step(
-                    replace(step, selector=selector, value=value))
-        locator = page.locator(selector).first if selector else None
+                    replace(step, selector=selector, value=value, frame=frame))
+
+        if action == "wait_popup":
+            self._exec_wait_popup(page, monitor)
+            return
+        if action == "close_popup":
+            self._exec_close_popup()
+            return
+
+        # goto·wait_ms처럼 페이지 전체를 다루는 동작은 활성 페이지에서,
+        # 나머지는 프레임까지 좁힌 대상에서 실행한다.
+        page = self._active_page(page)
+        scope = self._scope(page, step, frame)
+        locator = scope.locator(selector).first if selector else None
         if action == "goto":
             page.goto(
                 value,
@@ -509,23 +615,28 @@ class Runner:
         elif action == "press":
             locator.press(value)
         elif action == "wait_for":
-            page.wait_for_selector(
-                selector,
-                state="visible",
-                timeout=self._bounded_timeout(10000),
-            )
+            locator.wait_for(state="visible",
+                             timeout=self._bounded_timeout(10000))
         elif action == "wait_ms":
             self._wait(page, int(value))
         elif action == "extract":
-            self._exec_extract(page, step, selector, record)
+            self._exec_extract(scope, step, selector, record)
+        elif action == "upload":
+            locator.set_input_files(self._upload_path(value))
+        elif action == "hover":
+            locator.hover()
+        elif action == "scroll_to":
+            locator.scroll_into_view_if_needed()
+        elif action == "drag":
+            locator.drag_to(scope.locator(value).first)
         elif action == "assert_visible":
             timeout = self._bounded_timeout(3000)
             try:
-                page.wait_for_selector(selector, state="visible", timeout=timeout)
+                locator.wait_for(state="visible", timeout=timeout)
             except Exception:
                 raise AssertionError(f"요소 '{selector}'가 화면에 보이지 않습니다")
         elif action == "assert_text":
-            actual = page.locator(selector).first.inner_text(timeout=3000)
+            actual = locator.inner_text(timeout=3000)
             if value not in actual:
                 raise AssertionError(
                     f"기대 텍스트 '{value}'가 없습니다 (실제: '{actual[:80]}')")
@@ -535,20 +646,67 @@ class Runner:
         elif action == "assert_not_visible":
             # 요소가 아예 없거나(=hidden 대기 성공) 숨겨져야 통과. 짧은 대기 후 판정.
             try:
-                page.wait_for_selector(selector, state="hidden",
-                                       timeout=self._bounded_timeout(3000))
+                locator.wait_for(state="hidden",
+                                 timeout=self._bounded_timeout(3000))
             except Exception:
                 raise AssertionError(
                     f"요소 '{selector}'가 화면에서 사라지지 않았습니다 (보이면 안 됨)")
         elif action == "assert_not_text":
-            loc = page.locator(selector).first
             try:
-                actual = loc.inner_text(timeout=3000)
+                actual = locator.inner_text(timeout=3000)
             except Exception:
                 actual = ""   # 요소 자체가 없으면 텍스트도 없는 것 → 통과
             if value in actual:
                 raise AssertionError(
                     f"금지 텍스트 '{value}'가 존재합니다 (실제: '{actual[:80]}')")
+
+    def _exec_wait_popup(self, page, monitor) -> None:
+        """새 창이 열릴 때까지 기다렸다가 조작 대상을 그 창으로 옮긴다."""
+        if monitor is None:
+            raise AssertionError("이 실행 모드에서는 새 창을 다룰 수 없습니다")
+        self._ensure_pages()
+        deadline = time.monotonic() + self._bounded_timeout(10000) / 1000
+        while time.monotonic() < deadline:
+            popup = monitor.take_popup()
+            if popup is not None:
+                try:
+                    popup.wait_for_load_state("load",
+                                              timeout=self._bounded_timeout(5000))
+                except Exception:
+                    pass          # 로드가 늦어도 창 자체는 쓸 수 있다
+                self._page_stack.append(popup)
+                return
+            page.wait_for_timeout(100)
+        raise AssertionError("새 창이 열리지 않았습니다")
+
+    def _exec_close_popup(self) -> None:
+        self._ensure_pages()
+        if not self._page_stack:
+            raise AssertionError("닫을 새 창이 없습니다 (wait_popup 없이 close_popup)")
+        popup = self._page_stack.pop()
+        try:
+            popup.close()
+        except Exception:
+            pass
+
+    def _upload_path(self, value: str) -> str:
+        """업로드할 파일 경로 — 설정 파일 폴더 밖은 허용하지 않는다.
+
+        절대경로를 그대로 받으면 /etc/passwd 같은 시스템 파일을 대상 앱에
+        올려버릴 수 있다. 테스트가 쓸 파일은 설정 옆에 두는 것이 정상이다.
+        """
+        raw = Path(value)
+        if raw.is_absolute():
+            raise AssertionError(
+                f"업로드 경로는 설정 파일 폴더 기준 상대경로여야 합니다: {value}")
+        base = Path(self.cfg.config_path).resolve().parent
+        resolved = (base / raw).resolve()
+        if not resolved.is_relative_to(base):
+            raise AssertionError(
+                f"업로드 경로가 설정 파일 폴더를 벗어납니다: {value}")
+        if not resolved.is_file():
+            raise AssertionError(f"업로드할 파일이 없습니다: {resolved}")
+        return str(resolved)
 
     def _exec_extract(self, page, step: Step, selector: str, record=None) -> None:
         """화면의 값을 뽑아 변수에 담는다.

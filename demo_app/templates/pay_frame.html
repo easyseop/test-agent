@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>카드 입력</title>
+<style>body{font-family:'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;margin:0;background:#f5f6f8;color:#1f2937}
+.wrap{max-width:720px;margin:0 auto;padding:24px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px 20px}
+label{display:block;margin:8px 0}
+input,button{font:inherit;padding:6px 10px}
+button{cursor:pointer}
+iframe{width:100%;height:230px;border:1px solid #d1d5db;border-radius:6px;background:#fff}</style>
+</head>
+<body>
+<div class="wrap">
+  <p>결제 금액 <b id="frame-amount">{{ amount }}</b>원</p>
+  <label>카드번호 <input id="card-number" name="card_number" placeholder="0000-0000-0000-0000"></label>
+  <label>유효기간 <input id="card-expiry" name="card_expiry" placeholder="MM/YY"></label>
+  <button id="frame-verify" type="button"
+          onclick="document.getElementById('frame-result').textContent =
+                   (document.getElementById('card-number').value.replace(/\D/g,'').length === 16)
+                     ? '카드번호 형식 정상' : '카드번호 형식 오류'">확인</button>
+  <p id="frame-result">미확인</p>
+</div>
+</body>
+</html>

@@ -95,6 +95,31 @@ data_checks:
       sql: "SELECT id, customer, status, amount FROM orders WHERE status='shipped'"
 ```
 
+**화면 값을 뽑아 다시 쓰기** — 주문번호처럼 실행할 때마다 달라지는 값.
+
+```yaml
+steps:
+  - {action: click, selector: "#place-order"}
+  - {action: extract, selector: "#order-no", store_as: order_no,
+     pattern: "([0-9]+)"}          # 선택: 이 부분만 취함
+  - {action: goto, value: "/orders/{{order_no}}"}
+query:
+  db: sqlite:///staging.db
+  sql: "SELECT status FROM orders WHERE order_no = :order_no"
+  params: {order_no: "{{order_no}}"}      # SQL 본문에 직접 넣지 않는다
+```
+
+**결제창처럼 iframe·새 창으로 뜨는 화면**
+
+```yaml
+steps:
+  - {action: fill, selector: "#card", value: "${TEST_CARD}", frame: "iframe#pg"}
+  - {action: click, selector: "#pay"}
+  - {action: wait_popup}                  # 새 창으로 옮긴다
+  - {action: assert_text, selector: "#state", value: "승인"}
+  - {action: close_popup}                 # 원래 창으로 돌아온다
+```
+
 > **기대값은 설명서에서 가져온다.** 구현 코드의 WHERE절을 베끼면 구현 버그가
 > 기대값에 복제돼서 영원히 통과한다. 소스는 셀렉터·테이블명 확인용으로만 쓴다.
 
@@ -111,7 +136,7 @@ python -m webtest_agent run -c configs/우리사이트.yaml
 |---|---|
 | `--headed` | 브라우저 창을 띄워서 눈으로 본다 |
 | `--workers 4` | 읽기 전용 시나리오를 4개씩 병렬로 (결과 순서는 고정) |
-| `--allow-write-checks` | 저장·등록 검증을 명시적으로 승인 (기본 차단) |
+| `--allow-write-checks` | 저장·등록 검증과 데이터 초기화를 승인 (기본 차단) |
 
 ## 4. 결과 읽기
 
@@ -135,6 +160,10 @@ python -m webtest_agent run -c configs/우리사이트.yaml
 ## 5. 지켜야 할 것
 
 - **테스트·스테이징 환경에서 돌린다.** 운영 DB는 read-only 계정으로 조회 검증만.
+- 쓰기 검증을 반복하려면 `write_reset`으로 매 실행 전에 데이터를 되돌린다.
+  이것도 `--allow-write-checks` 승인이 있어야 돌고, 실패하면 판정하지 않고
+  실행 불가로 끝난다.
+- 업로드할 파일은 설정 파일 옆에 둔다. 그 폴더 밖 경로는 거부된다.
 - 저장·삭제·결제·발송·로그아웃 버튼은 자동 점검에서 **누르지 않는다.** 이 최소
   차단 목록은 YAML에서 뺄 수 없고, 막은 이유가 리포트에 남는다.
 - 쓰기 검증(`write_checks`)은 기본 차단이다. 시드 DB에서 `--allow-write-checks`로

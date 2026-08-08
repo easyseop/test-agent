@@ -195,13 +195,14 @@ def test_unknown_step_action(tmp_path):
 target: {base_url: http://x}
 data_checks:
   - name: t
-    steps: [{action: hover, selector: "#a"}]
+    steps: [{action: teleport, selector: "#a"}]
     ui_table: {selector: "#t"}
     query: {db: "sqlite:///x.db", sql: "SELECT 1"}
 """,
         encoding="utf-8",
     )
-    with pytest.raises(ConfigError, match="hover"):
+    # hover는 이제 지원하는 동작이므로 '없는 동작'의 예로 쓸 수 없다.
+    with pytest.raises(ConfigError, match="teleport"):
         load_config(p)
 
 

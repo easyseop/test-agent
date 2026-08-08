@@ -197,6 +197,41 @@ def export_csv():
     )
 
 
+# ── 결제 흐름 흉내 (iframe + 새 창 + 파일 첨부 검증용) ─────────────
+#
+# 실제 PG(결제대행사)는 결제창을 별도 창이나 iframe으로 띄운다. 외부에 접속하지
+# 않고도 그 구조를 검증할 수 있도록 같은 앱 안에서 흉내만 낸다.
+
+@app.route("/checkout")
+def checkout():
+    return render_template("checkout.html", amount=request.args.get("amount", "12345"))
+
+
+@app.route("/pay-frame")
+def pay_frame():
+    """iframe 안에 뜨는 카드 입력 폼 (실제 카드가 아니라 형식만 확인)."""
+    return render_template("pay_frame.html", amount=request.args.get("amount", "12345"))
+
+
+@app.route("/pay-popup")
+def pay_popup():
+    """새 창으로 뜨는 결제 확인 화면."""
+    return render_template("pay_popup.html", amount=request.args.get("amount", "12345"))
+
+
+@app.route("/attach", methods=["GET", "POST"])
+def attach():
+    """파일 첨부 — 업로드한 파일의 이름과 바이트 수만 되돌려준다."""
+    info = ""
+    if request.method == "POST":
+        f = request.files.get("receipt")
+        if f is not None and f.filename:
+            info = f"{f.filename} · {len(f.read())}바이트"
+        else:
+            info = "파일 없음"
+    return render_template("attach.html", info=info)
+
+
 @app.route("/favicon.ico")
 def favicon():
     return Response(status=204)

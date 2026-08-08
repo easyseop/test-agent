@@ -49,7 +49,8 @@ def validate_step_vars(steps: list["Step"], where: str) -> None:
     """
     known: set[str] = set()
     for i, step in enumerate(steps, start=1):
-        for name in var_refs(step.selector) + var_refs(step.value):
+        for name in (var_refs(step.selector) + var_refs(step.value)
+                     + var_refs(step.frame)):
             if name not in known:
                 raise ConfigError(
                     f"{where}.steps[{i - 1}]: 변수 '{{{{{name}}}}}'를 쓰기 전에 "
@@ -99,13 +100,21 @@ STEP_ACTIONS = {
     "assert_visible", "assert_text", "assert_url",
     "assert_not_visible", "assert_not_text",
     "extract",
+    # 새 창 — 결제창·소셜 로그인처럼 별도 창으로 뜨는 흐름
+    "wait_popup", "close_popup",
+    # 마우스·파일 조작
+    "upload", "hover", "scroll_to", "drag",
 }
 _NEEDS_SELECTOR = {"click", "fill", "select", "check", "press", "wait_for",
                    "assert_visible", "assert_text",
                    "assert_not_visible", "assert_not_text",
-                   "extract"}
+                   "extract",
+                   "upload", "hover", "scroll_to", "drag"}
 _NEEDS_VALUE = {"goto", "fill", "select", "press", "wait_ms", "assert_text", "assert_url",
-                "assert_not_text"}
+                "assert_not_text",
+                "upload", "drag"}
+# 새 창 안에서는 프레임 지정이 의미가 없거나(창 전환 자체) 대상이 없다.
+_NO_FRAME = {"wait_popup", "close_popup", "goto", "wait_ms", "assert_url"}
 
 
 @dataclass
@@ -116,6 +125,9 @@ class Step:
     secret: bool = False        # True면 값을 리포트·절차서에 남기지 않는다
     store_as: str | None = None  # extract 전용 — 뽑은 값을 담을 변수 이름
     pattern: str | None = None   # extract 전용 — 뽑은 텍스트에서 1개 그룹만 취함
+    # 이 스텝이 조작할 iframe. 중첩은 'iframe#a >> iframe#b'.
+    # 결제창·주소검색처럼 화면 안의 다른 문서를 다룰 때 쓴다.
+    frame: str | None = None
 
     @property
     def log_value(self) -> str | None:
@@ -163,12 +175,22 @@ class Step:
             if pattern is not None:
                 raise ConfigError(f"{where}: pattern은 action 'extract'에서만 씁니다")
 
+        frame = d.get("frame")
+        if frame is not None:
+            frame = str(frame).strip()
+            if not frame:
+                raise ConfigError(f"{where}.frame: 빈 값은 쓸 수 없습니다")
+            if action in _NO_FRAME:
+                raise ConfigError(
+                    f"{where}: action '{action}'에는 frame을 쓸 수 없습니다 "
+                    f"(프레임 안에서 의미가 없는 동작)")
+
         raw_value = None if value is None else str(value)
         secret = _is_secret_step(raw_value, selector)
         if raw_value is not None:
             value = _expand_env(raw_value, where)
         return cls(action=action, selector=selector, value=value, secret=secret,
-                   store_as=store_as, pattern=pattern)
+                   store_as=store_as, pattern=pattern, frame=frame)
 
 
 @dataclass

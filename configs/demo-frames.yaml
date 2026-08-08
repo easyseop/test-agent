@@ -1,0 +1,82 @@
+# iframe·새 창·파일 첨부·마우스 동작 시연
+#   ./scripts/run_demo.sh --frames
+#
+# 결제창(PG)은 실제로 iframe이나 별도 창으로 뜬다. 외부에 접속하지 않고도 그
+# 구조를 검증할 수 있도록 데모앱이 같은 구조를 흉내 낸다.
+target: {base_url: 'http://127.0.0.1:5057', settle_ms: 300}
+crawl: {enabled: false}
+button_sweep: {enabled: false}
+
+spec_checks:
+  # C-1. iframe 안의 요소를 읽는다 (프레임 지정 없이는 안 보여야 한다)
+  - name: C1-iframe-금액표시
+    description: 결제 iframe 안에 바깥 화면과 같은 금액이 표시되어야 한다
+    page: /checkout?amount=12345
+    steps:
+      - {action: assert_text, selector: "#checkout-amount", value: "12345"}
+      - {action: assert_text, selector: "#frame-amount", value: "12345", frame: "#pg-frame"}
+
+  # C-2. iframe 안에 입력하고 그 안의 버튼을 눌러 결과까지 확인한다
+  - name: C2-iframe-카드번호검증
+    description: iframe 안 카드번호 16자리를 넣고 확인을 누르면 형식 정상이 되어야 한다
+    page: /checkout?amount=12345
+    steps:
+      - {action: fill, selector: "#card-number", value: "4111111111111111", frame: "#pg-frame"}
+      - {action: fill, selector: "#card-expiry", value: "12/28", frame: "#pg-frame"}
+      - {action: click, selector: "#frame-verify", frame: "#pg-frame"}
+      - {action: assert_text, selector: "#frame-result", value: "정상", frame: "#pg-frame"}
+
+  # C-3. 자릿수가 모자라면 오류가 나야 한다 (검사가 헛돌지 않는다는 확인)
+  - name: C3-iframe-잘못된카드번호
+    description: 카드번호가 16자리가 아니면 형식 오류가 나야 한다
+    page: /checkout?amount=12345
+    steps:
+      - {action: fill, selector: "#card-number", value: "4111", frame: "#pg-frame"}
+      - {action: click, selector: "#frame-verify", frame: "#pg-frame"}
+      - {action: assert_text, selector: "#frame-result", value: "오류", frame: "#pg-frame"}
+
+  # C-4. 새 창을 열어 그 안에서 조작하고 원래 창으로 돌아온다
+  - name: C4-새창-결제확인
+    description: 결제창 열기를 누르면 새 창이 뜨고, 그 안에서 확인하면 승인 완료가 되어야 한다
+    page: /checkout?amount=12345
+    steps:
+      - {action: click, selector: "#open-popup"}
+      - {action: wait_popup}
+      - {action: assert_text, selector: "#popup-title", value: "결제 확인"}
+      - {action: assert_text, selector: "#popup-amount", value: "12345"}
+      - {action: click, selector: "#popup-confirm"}
+      - {action: assert_text, selector: "#popup-state", value: "승인 완료"}
+      - {action: close_popup}
+      - {action: assert_visible, selector: "#checkout-amount"}
+
+  # C-5. 새 창에서 값을 뽑아 원래 창으로 돌아온 뒤에도 쓸 수 있어야 한다 (A와 결합)
+  - name: C5-새창값-원래창에서사용
+    description: 새 창의 금액을 뽑아 원래 창의 금액과 같은지 확인한다
+    page: /checkout?amount=12345
+    steps:
+      - {action: click, selector: "#open-popup"}
+      - {action: wait_popup}
+      - {action: extract, selector: "#popup-amount", store_as: paid}
+      - {action: close_popup}
+      - {action: assert_text, selector: "#checkout-amount", value: "{{paid}}"}
+
+  # D-1. 파일 업로드
+  - name: D1-파일첨부
+    description: 영수증 파일을 첨부하면 파일 이름과 크기가 표시되어야 한다
+    page: /attach
+    steps:
+      - {action: upload, selector: "#receipt", value: "receipt.txt"}
+      - {action: click, selector: "#attach-submit"}
+      - {action: assert_text, selector: "#attach-result", value: "receipt.txt"}
+
+  # D-2. 호버·스크롤
+  - name: D2-마우스와스크롤
+    description: 링크에 마우스를 올리고 요소가 보이도록 스크롤할 수 있어야 한다
+    page: /checkout?amount=12345
+    steps:
+      - {action: scroll_to, selector: "#back-home"}
+      - {action: hover, selector: "#back-home"}
+      - {action: assert_visible, selector: "#back-home"}
+
+report:
+  title: iframe·새 창·첨부 시연

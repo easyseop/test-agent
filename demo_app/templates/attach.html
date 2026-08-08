@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>영수증 첨부 — 주문 관리 대시보드</title>
+<style>body{font-family:'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;margin:0;background:#f5f6f8;color:#1f2937}
+.wrap{max-width:720px;margin:0 auto;padding:24px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px 20px}
+label{display:block;margin:8px 0}
+input,button{font:inherit;padding:6px 10px}
+button{cursor:pointer}
+iframe{width:100%;height:230px;border:1px solid #d1d5db;border-radius:6px;background:#fff}</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>영수증 첨부</h1>
+  <div class="card">
+    <form method="post" enctype="multipart/form-data">
+      <label>영수증 파일 <input id="receipt" name="receipt" type="file"></label>
+      <button id="attach-submit" type="submit">첨부</button>
+    </form>
+    <p>첨부 결과: <span id="attach-result">{{ info or '없음' }}</span></p>
+    <p><a id="back-home" href="/">← 대시보드로 돌아가기</a></p>
+  </div>
+</div>
+</body>
+</html>

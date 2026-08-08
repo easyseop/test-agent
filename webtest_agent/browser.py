@@ -64,6 +64,10 @@ class PageMonitor:
         self.downloads: list[str] = []
         self.popups: list[str] = []
         self.navigations: int = 0
+        # 자동 스윕이 연 창은 그대로 두면 쌓이므로 바로 닫는다. 반대로 시나리오가
+        # wait_popup으로 "이 창을 쓰겠다"고 밝힌 동안에는 닫지 않고 넘겨준다.
+        self.hold_popups: bool = False
+        self.captured_popups: list[Page] = []
 
     def attach(self, page: Page) -> None:
         page.on("console", self._on_console)
@@ -119,10 +123,21 @@ class PageMonitor:
 
     def _on_popup(self, popup: Page) -> None:
         self.popups.append(popup.url)
+        if self.hold_popups:
+            # 시나리오가 쓰겠다고 밝힌 창이다. 새 창에서 나는 콘솔·HTTP 오류도
+            # 원래 창과 똑같이 관측해야 한다 — 결제창에서 난 오류를 놓치면
+            # "화면이 떴으니 통과"가 되어버린다.
+            self.attach(popup)
+            self.captured_popups.append(popup)
+            return
         try:
             popup.close()
         except Exception:
             pass
+
+    def take_popup(self) -> Page | None:
+        """붙잡아 둔 새 창 중 가장 먼저 열린 것을 꺼낸다."""
+        return self.captured_popups.pop(0) if self.captured_popups else None
 
 
 class BrowserSession:
