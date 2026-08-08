@@ -19,6 +19,49 @@ class ConfigError(ValueError):
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
+# 실행 중 화면에서 뽑은 값을 참조하는 자리표시자. `${VAR}`(설정 로딩 시점의
+# 환경변수)와 문법을 일부러 다르게 뒀다 — 비밀 주입과 화면 값 재사용은 성격이
+# 다르므로 YAML만 봐도 구분되어야 한다.
+_VAR_RX = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+_VAR_NAME_RX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def var_refs(text: str | None) -> list[str]:
+    """문자열이 참조하는 `{{변수}}` 이름들."""
+    return [] if text is None else _VAR_RX.findall(text)
+
+
+def substitute_vars(text: str, values: dict[str, str]) -> str:
+    """`{{변수}}`를 실제 값으로 바꾼다. 없는 변수는 KeyError."""
+    def repl(m: re.Match) -> str:
+        name = m.group(1)
+        if name not in values:
+            raise KeyError(name)
+        return values[name]
+    return _VAR_RX.sub(repl, text)
+
+
+def validate_step_vars(steps: list["Step"], where: str) -> None:
+    """변수는 같은 시나리오 안에서 '먼저 추출한 뒤에만' 쓸 수 있다.
+
+    시나리오 사이로 값이 넘어가면 실행 순서에 의존이 생겨 병렬 실행과 독립성이
+    깨진다. 그래서 범위를 시나리오 하나로 못박고, 여기서 정적으로 검사한다.
+    """
+    known: set[str] = set()
+    for i, step in enumerate(steps, start=1):
+        for name in var_refs(step.selector) + var_refs(step.value):
+            if name not in known:
+                raise ConfigError(
+                    f"{where}.steps[{i - 1}]: 변수 '{{{{{name}}}}}'를 쓰기 전에 "
+                    f"extract로 먼저 뽑아야 합니다 (변수는 같은 시나리오 안에서만 유효)")
+        if step.action == "extract" and step.store_as:
+            if step.store_as in known:
+                raise ConfigError(
+                    f"{where}.steps[{i - 1}]: 변수 '{step.store_as}'를 두 번 추출합니다 "
+                    "(덮어쓰면 앞 단계의 기대값이 조용히 바뀝니다)")
+            known.add(step.store_as)
+
+
 # 값이 증거(리포트·절차서)에 남으면 안 되는 입력을 가리키는 selector 힌트.
 # 환경변수 치환 여부와 무관하게 이 셀렉터에 입력한 값은 기록에서 가린다.
 # 앞뒤가 알파벳이면 다른 단어의 일부다 (#compass의 'pass', #spinner의 'pin' 등).
@@ -55,10 +98,12 @@ STEP_ACTIONS = {
     "goto", "click", "fill", "select", "check", "press", "wait_for", "wait_ms",
     "assert_visible", "assert_text", "assert_url",
     "assert_not_visible", "assert_not_text",
+    "extract",
 }
 _NEEDS_SELECTOR = {"click", "fill", "select", "check", "press", "wait_for",
                    "assert_visible", "assert_text",
-                   "assert_not_visible", "assert_not_text"}
+                   "assert_not_visible", "assert_not_text",
+                   "extract"}
 _NEEDS_VALUE = {"goto", "fill", "select", "press", "wait_ms", "assert_text", "assert_url",
                 "assert_not_text"}
 
@@ -69,6 +114,8 @@ class Step:
     selector: str | None = None
     value: str | None = None
     secret: bool = False        # True면 값을 리포트·절차서에 남기지 않는다
+    store_as: str | None = None  # extract 전용 — 뽑은 값을 담을 변수 이름
+    pattern: str | None = None   # extract 전용 — 뽑은 텍스트에서 1개 그룹만 취함
 
     @property
     def log_value(self) -> str | None:
@@ -90,11 +137,38 @@ class Step:
             raise ConfigError(f"{where}: action '{action}'에는 selector가 필요합니다")
         if action in _NEEDS_VALUE and value is None:
             raise ConfigError(f"{where}: action '{action}'에는 value가 필요합니다")
+
+        store_as = d.get("store_as")
+        pattern = d.get("pattern")
+        if action == "extract":
+            if not store_as:
+                raise ConfigError(f"{where}: action 'extract'에는 store_as가 필요합니다")
+            store_as = str(store_as)
+            if not _VAR_NAME_RX.fullmatch(store_as):
+                raise ConfigError(
+                    f"{where}: store_as '{store_as}'는 영문자·숫자·밑줄만 쓸 수 있습니다")
+            if pattern is not None:
+                pattern = str(pattern)
+                try:
+                    compiled = re.compile(pattern)
+                except re.error as err:
+                    raise ConfigError(f"{where}.pattern: 정규식 오류 — {err}") from err
+                if compiled.groups != 1:
+                    raise ConfigError(
+                        f"{where}.pattern: 그룹이 정확히 1개여야 합니다 "
+                        f"(현재 {compiled.groups}개). 예: '주문번호 ([0-9]+)'")
+        else:
+            if store_as is not None:
+                raise ConfigError(f"{where}: store_as는 action 'extract'에서만 씁니다")
+            if pattern is not None:
+                raise ConfigError(f"{where}: pattern은 action 'extract'에서만 씁니다")
+
         raw_value = None if value is None else str(value)
         secret = _is_secret_step(raw_value, selector)
         if raw_value is not None:
             value = _expand_env(raw_value, where)
-        return cls(action=action, selector=selector, value=value, secret=secret)
+        return cls(action=action, selector=selector, value=value, secret=secret,
+                   store_as=store_as, pattern=pattern)
 
 
 @dataclass
@@ -159,6 +233,10 @@ class QuerySpec:
     sql: str = ""
     order_matters: bool = False
     api: ApiSpec | None = None    # db+sql 대신 API를 정답원으로 사용
+    # 화면에서 뽑은 값을 SQL에 넘기는 유일한 통로. 값은 바인딩 파라미터로만
+    # 전달하며 SQL 본문에는 절대 이어붙이지 않는다 — 추출값이 SQL 조각이어도
+    # 명령이 아니라 데이터로만 취급되게 하기 위해서다.
+    params: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -350,6 +428,31 @@ def _regex_list(values, where: str) -> list[str]:
     return patterns
 
 
+def _parse_steps(raw_steps, where: str) -> list[Step]:
+    """스텝 목록 파싱 + 변수 사용 순서 검증.
+
+    파싱과 검증을 한 곳에 묶어 둔다. 시나리오 종류가 늘 때 검증을 빠뜨리면
+    "쓰기 전에 추출" 규칙이 조용히 무너지기 때문이다.
+    """
+    steps = [Step.from_dict(sd, f"{where}.steps[{j}]")
+             for j, sd in enumerate(raw_steps or [])]
+    validate_step_vars(steps, where)
+    return steps
+
+
+def _validate_query_vars(query: QuerySpec | None, steps: list[Step], where: str) -> None:
+    """정답 쿼리 파라미터가 참조하는 변수도 스텝에서 먼저 추출돼야 한다."""
+    if query is None:
+        return
+    extracted = {s.store_as for s in steps if s.action == "extract" and s.store_as}
+    for name, raw in query.params.items():
+        for ref in var_refs(raw):
+            if ref not in extracted:
+                raise ConfigError(
+                    f"{where}.query.params.{name}: 변수 '{{{{{ref}}}}}'를 이 시나리오의 "
+                    "스텝에서 extract로 뽑지 않았습니다")
+
+
 def _parse_query(q_raw, where: str, allow_api: bool) -> QuerySpec:
     """query 파싱 — (db+sql) 또는 api 중 정확히 하나."""
     if not q_raw:
@@ -374,14 +477,35 @@ def _parse_query(q_raw, where: str, allow_api: bool) -> QuerySpec:
     if not q_raw.get("db") or not q_raw.get("sql"):
         raise ConfigError(f"{where}: query.db와 query.sql이 필요합니다")
     sql = str(q_raw["sql"])
+    if var_refs(sql):
+        raise ConfigError(
+            f"{where}.query.sql: SQL 본문에는 {{{{변수}}}}를 쓸 수 없습니다. "
+            "query.params로 넘기고 SQL에서는 :이름 으로 받으세요 "
+            "(값을 문자열로 이어붙이면 주입 위험이 생깁니다)")
     try:
         validate_read_only_sql(sql)
     except ValueError as err:
         raise ConfigError(f"{where}.query.sql: {err}") from err
+
+    params_raw = q_raw.get("params") or {}
+    if not isinstance(params_raw, dict):
+        raise ConfigError(f"{where}.query.params: 매핑이어야 합니다 (예: {{order_no: '{{{{order_no}}}}'}})")
+    params: dict[str, str] = {}
+    for key, raw in params_raw.items():
+        name = str(key)
+        if not _VAR_NAME_RX.fullmatch(name):
+            raise ConfigError(
+                f"{where}.query.params: 파라미터 이름 '{name}'은 영문자·숫자·밑줄만 쓸 수 있습니다")
+        if f":{name}" not in sql:
+            raise ConfigError(
+                f"{where}.query.params: '{name}'을 넘기지만 SQL에 :{name} 자리가 없습니다")
+        params[name] = _expand_env(str(raw), f"{where}.query.params.{name}")
+
     return QuerySpec(
         db=_expand_env(str(q_raw["db"]), f"{where}.query.db"),
         sql=sql,
         order_matters=bool(q_raw.get("order_matters", False)),
+        params=params,
     )
 
 
@@ -435,7 +559,7 @@ def load_config(path: str | Path) -> AgentConfig:
         if not isinstance(raw, dict) or not raw.get("name"):
             raise ConfigError(f"{where}: name이 필요합니다")
         name = str(raw["name"])
-        steps = [Step.from_dict(sd, f"{where}.steps[{j}]") for j, sd in enumerate(raw.get("steps") or [])]
+        steps = _parse_steps(raw.get("steps"), where)
 
         ut_raw = raw.get("ui_table")
         if not ut_raw or not ut_raw.get("selector"):
@@ -458,6 +582,7 @@ def load_config(path: str | Path) -> AgentConfig:
         )
 
         query = _parse_query(raw.get("query"), where, allow_api=True)
+        _validate_query_vars(query, steps, where)
 
         checks.append(DataCheckSpec(
             name=name,
@@ -473,8 +598,7 @@ def load_config(path: str | Path) -> AgentConfig:
         where = f"spec_checks[{i}]"
         if not isinstance(raw, dict) or not raw.get("name"):
             raise ConfigError(f"{where}: name이 필요합니다")
-        spec_steps = [Step.from_dict(sd, f"{where}.steps[{j}]")
-                      for j, sd in enumerate(raw.get("steps") or [])]
+        spec_steps = _parse_steps(raw.get("steps"), where)
         if not spec_steps:
             raise ConfigError(f"{where}: steps가 최소 1개 필요합니다")
         specs.append(SpecCheckSpec(
@@ -489,18 +613,19 @@ def load_config(path: str | Path) -> AgentConfig:
         where = f"write_checks[{i}]"
         if not isinstance(raw, dict) or not raw.get("name"):
             raise ConfigError(f"{where}: name이 필요합니다")
-        w_steps = [Step.from_dict(sd, f"{where}.steps[{j}]")
-                   for j, sd in enumerate(raw.get("steps") or [])]
+        w_steps = _parse_steps(raw.get("steps"), where)
         if not w_steps:
             raise ConfigError(f"{where}: steps가 최소 1개 필요합니다")
         if "expect_delta" not in raw:
             raise ConfigError(f"{where}: expect_delta가 필요합니다 (예: 1)")
+        w_query = _parse_query(raw.get("query"), where, allow_api=False)
+        _validate_query_vars(w_query, w_steps, where)
         writes.append(WriteCheckSpec(
             name=str(raw["name"]),
             page=str(raw.get("page", "/")),
             description=str(raw.get("description", "")),
             steps=w_steps,
-            query=_parse_query(raw.get("query"), where, allow_api=False),
+            query=w_query,
             expect_delta=int(raw["expect_delta"]),
         ))
 
@@ -516,8 +641,7 @@ def load_config(path: str | Path) -> AgentConfig:
             name=str(raw["name"]),
             page=str(raw.get("page", "/")),
             description=str(raw.get("description", "")),
-            steps=[Step.from_dict(sd, f"{where}.steps[{j}]")
-                   for j, sd in enumerate(raw.get("steps") or [])],
+            steps=_parse_steps(raw.get("steps"), where),
             selector=str(raw.get("selector", "")),
             full_page=bool(raw.get("full_page", False)),
             threshold=float(raw.get("threshold", 0.01)),
@@ -545,8 +669,7 @@ def load_config(path: str | Path) -> AgentConfig:
             name=str(raw["name"]),
             page=str(raw.get("page", "/")),
             description=str(raw.get("description", "")),
-            steps=[Step.from_dict(sd, f"{where}.steps[{j}]")
-                   for j, sd in enumerate(raw.get("steps") or [])],
+            steps=_parse_steps(raw.get("steps"), where),
             viewports=viewports,
             height=int(raw.get("height", 900)),
             max_overflow_px=int(raw.get("max_overflow_px", 2)),
@@ -569,8 +692,7 @@ def load_config(path: str | Path) -> AgentConfig:
             name=str(raw["name"]),
             page=str(raw.get("page", "/")),
             description=str(raw.get("description", "")),
-            steps=[Step.from_dict(sd, f"{where}.steps[{j}]")
-                   for j, sd in enumerate(raw.get("steps") or [])],
+            steps=_parse_steps(raw.get("steps"), where),
             metric=metric,
             budget_ms=budget,
         ))
@@ -621,8 +743,7 @@ def load_config(path: str | Path) -> AgentConfig:
     auth: AuthConfig | None = None
     a_raw = data.get("auth")
     if a_raw:
-        auth_steps = [Step.from_dict(sd, f"auth.steps[{j}]")
-                      for j, sd in enumerate(a_raw.get("steps") or [])]
+        auth_steps = _parse_steps(a_raw.get("steps"), "auth")
         if not auth_steps:
             raise ConfigError("auth: steps가 최소 1개 필요합니다")
         auth = AuthConfig(steps=auth_steps)

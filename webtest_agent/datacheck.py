@@ -69,19 +69,24 @@ def _enforce_session_read_only(conn, db_url: str, text) -> None:
         ) from err
 
 
-def run_query(db_url: str, sql: str) -> tuple[list[str], list[tuple]]:
+def run_query(db_url: str, sql: str,
+              params: dict[str, str] | None = None) -> tuple[list[str], list[tuple]]:
     """정답 쿼리 실행.
 
     - sqlite:///<경로> : 내장 sqlite3, 읽기 전용(read-only) 접속
     - 그 외 SQLAlchemy URL (postgresql://…, mysql+pymysql://… 등) : sqlalchemy 필요
+
+    params는 **바인딩 파라미터**로만 전달한다. 화면에서 뽑은 값이 SQL 조각처럼
+    생겼더라도 드라이버가 값으로만 다루므로 질의 구조를 바꾸지 못한다.
     """
     validate_read_only_sql(sql)
+    bound = dict(params or {})
 
     if db_url.startswith("sqlite:///"):
         path = db_url[len("sqlite:///"):]
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
-            cur = conn.execute(sql)
+            cur = conn.execute(sql, bound)
             cols = [d[0] for d in cur.description or []]
             rows = cur.fetchall()
         finally:
@@ -100,7 +105,7 @@ def run_query(db_url: str, sql: str) -> tuple[list[str], list[tuple]]:
         try:
             with engine.connect() as conn:
                 _enforce_session_read_only(conn, db_url, text)
-                result = conn.execute(text(sql))
+                result = conn.execute(text(sql), bound)
                 cols = list(result.keys())
                 rows = [tuple(r) for r in result.fetchall()]
         finally:
@@ -144,13 +149,14 @@ def run_api_query(api: ApiSpec, base_url: str) -> tuple[list[str], list[tuple]]:
     return list(api.columns), extract_api_rows(data, api.rows_path, api.columns)
 
 
-def run_scalar_query(db_url: str, sql: str) -> Decimal:
+def run_scalar_query(db_url: str, sql: str,
+                     params: dict[str, str] | None = None) -> Decimal:
     """단일 수치를 반환하는 쿼리 실행 (쓰기 검증의 사전/사후 측정용).
 
     binary float를 쓰면 큰 정수(2^53 초과)나 금액 소수에서 변화량이 어긋나므로
     Decimal로 다룬다 — 표 비교가 문자열 정규화를 쓰는 것과 같은 이유다.
     """
-    cols, rows = run_query(db_url, sql)
+    cols, rows = run_query(db_url, sql, params)
     if not rows or not rows[0]:
         raise ValueError("쿼리 결과가 비어 있습니다 (단일 수치가 필요)")
     try:

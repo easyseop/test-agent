@@ -5,10 +5,11 @@ import os
 import re
 import shutil
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from .browser import BrowserSession, save_screenshot
-from .config import MASK, AgentConfig, Step
+from .config import MASK, AgentConfig, Step, substitute_vars
 from .datacheck import (compare, extract_table, parse_count, run_api_query,
                         run_query, run_scalar_query)
 from .models import (FAIL, PASS, WARN, DataCheckResult, PerfResult,
@@ -87,6 +88,7 @@ def describe_step(step: Step) -> str:
         "assert_url": f"주소(URL)가 '{val}' 패턴과 일치하는지 확인한다",
         "assert_not_visible": f"{sel} 요소가 화면에 보이지 않는지 확인한다",
         "assert_not_text": f"{sel} 요소에 '{val}' 텍스트가 없는지 확인한다",
+        "extract": f"{sel}의 값을 읽어 '{step.store_as}'에 담는다",
     }[step.action]
 
 
@@ -153,8 +155,50 @@ class Runner:
         self.update_baselines = update_baselines
         self.allow_write_checks = allow_write_checks
         self.deadline_monotonic = deadline_monotonic
+        # 화면에서 뽑은 값. 시나리오가 시작될 때마다 비운다 — 시나리오 사이로 값이
+        # 새면 실행 순서에 의존이 생겨 병렬 실행과 결과 독립성이 깨진다.
+        self._vars: dict[str, str] = {}
+        self._secret_vars: set[str] = set()
         (run_dir / "videos").mkdir(parents=True, exist_ok=True)
         (run_dir / "traces").mkdir(parents=True, exist_ok=True)
+
+    def _reset_vars(self) -> None:
+        self._vars = {}
+        self._secret_vars = set()
+
+    def _ensure_vars(self) -> None:
+        """변수 저장소가 반드시 있게 한다.
+
+        `Runner.__new__`로 __init__을 건너뛰고 만든 인스턴스(스텝 단위 테스트가
+        쓰는 방식)에서도 스텝 실행이 되어야 한다. 클래스 변수로 기본값을 두면
+        인스턴스끼리 같은 dict를 공유해 값이 새므로 그렇게 하지 않는다.
+        """
+        if "_vars" not in self.__dict__:
+            self._reset_vars()
+
+    def _resolve(self, text: str | None) -> str | None:
+        """`{{변수}}`를 이번 시나리오에서 뽑은 값으로 바꾼다."""
+        if text is None:
+            return None
+        self._ensure_vars()
+        try:
+            return substitute_vars(text, self._vars)
+        except KeyError as err:
+            raise AssertionError(
+                f"변수 '{{{{{err.args[0]}}}}}'가 아직 추출되지 않았습니다") from err
+
+    def _mask_vars(self, text: str) -> str:
+        """비밀로 판정된 추출값이 메시지·증거에 섞여 나오지 않게 가린다."""
+        self._ensure_vars()
+        for name in self._secret_vars:
+            value = self._vars.get(name)
+            if value:
+                text = text.replace(value, MASK)
+        return text
+
+    def _query_params(self, query) -> dict[str, str]:
+        """정답 쿼리에 넘길 바인딩 값 — 변수 치환은 여기서만 일어난다."""
+        return {name: self._resolve(raw) for name, raw in (query.params or {}).items()}
 
     def _rel(self, path: str | Path) -> str:
         if not path:
@@ -210,6 +254,7 @@ class Runner:
         fd = os.open(state_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         os.close(fd)
         ctx, page, _monitor = self.session.new_context(self.cfg.target.base_url)
+        self._reset_vars()
         try:
             page.set_default_timeout(5000)
             for step in steps:
@@ -226,6 +271,7 @@ class Runner:
             name=scenario.name, kind=scenario.kind,
             page=scenario.page, description=scenario.description,
         )
+        self._reset_vars()
         started = time.monotonic()
 
         # CLI 계획 단계를 우회해 Runner를 직접 호출해도 쓰기 경계를 넘지 못한다.
@@ -296,7 +342,8 @@ class Runner:
             write_pre: float | None = None
             if scenario.kind == "write_check":
                 spec = scenario.write_spec
-                write_pre = run_scalar_query(spec.query.db, spec.query.sql)
+                write_pre = run_scalar_query(spec.query.db, spec.query.sql,
+                                             self._query_params(spec.query))
 
             step_failed = False
             for i, step in enumerate(scenario.steps, start=1):
@@ -307,14 +354,14 @@ class Runner:
                                 value=step.log_value, description=describe_step(step))
                 t0 = time.monotonic()
                 try:
-                    self._exec_step(page, step)
+                    self._exec_step(page, step, record=sr)
                     self._wait(page, self.cfg.target.settle_ms)
                     sr.screenshot = self._rel(self._shot(page, shots_dir / f"step{i:02d}.jpg"))
                 except RunDeadlineExceeded:
                     raise
                 except Exception as err:
                     sr.status = "fail"
-                    sr.error = _scrub(_short(err), step)
+                    sr.error = self._mask_vars(_scrub(_short(err), step))
                     sr.screenshot = self._rel(self._shot(page, shots_dir / f"step{i:02d}_fail.jpg"))
                     res.steps.append(sr)
                     res.reasons.append(f"스텝 {i} 실패 — {sr.description}: {sr.error}")
@@ -361,7 +408,8 @@ class Runner:
             if scenario.kind == "write_check" and not step_failed and write_pre is not None:
                 spec = scenario.write_spec
                 try:
-                    post = run_scalar_query(spec.query.db, spec.query.sql)
+                    post = run_scalar_query(spec.query.db, spec.query.sql,
+                                            self._query_params(spec.query))
                     delta = post - write_pre
                     res.write_check = WriteCheckResult(
                         pre=write_pre, post=post, delta=delta,
@@ -423,12 +471,25 @@ class Runner:
         self._verdict(res, scenario, hard_fail)
         return res
 
-    def _exec_step(self, page, step: Step) -> None:
+    def _exec_step(self, page, step: Step, record=None) -> None:
         action = step.action
-        locator = page.locator(step.selector).first if step.selector else None
+        # 셀렉터·값의 `{{변수}}`는 실행 시점에 푼다. 설정 로딩 시점에 푸는
+        # `${환경변수}`와 달리 이 값은 방금 화면에서 읽은 것이다.
+        selector = self._resolve(step.selector)
+        value = self._resolve(step.value)
+        # 절차서·리포트는 재현 문서다. 변수를 쓴 스텝은 원문이 아니라 그때 실제로
+        # 쓰인 값을 남겨야 나중에 무슨 값이었는지 알 수 있다.
+        if record is not None:
+            if selector != step.selector:
+                record.selector = selector
+            if value != step.value:
+                record.value = MASK if step.secret else value
+                record.description = describe_step(
+                    replace(step, selector=selector, value=value))
+        locator = page.locator(selector).first if selector else None
         if action == "goto":
             page.goto(
-                step.value,
+                value,
                 wait_until="load",
                 timeout=self._bounded_timeout(self.cfg.target.nav_timeout_ms),
             )
@@ -440,52 +501,91 @@ class Runner:
             except Exception:
                 pass
         elif action == "fill":
-            locator.fill(step.value)
+            locator.fill(value)
         elif action == "select":
-            locator.select_option(step.value)
+            locator.select_option(value)
         elif action == "check":
             locator.check()
         elif action == "press":
-            locator.press(step.value)
+            locator.press(value)
         elif action == "wait_for":
             page.wait_for_selector(
-                step.selector,
+                selector,
                 state="visible",
                 timeout=self._bounded_timeout(10000),
             )
         elif action == "wait_ms":
-            self._wait(page, int(step.value))
+            self._wait(page, int(value))
+        elif action == "extract":
+            self._exec_extract(page, step, selector, record)
         elif action == "assert_visible":
             timeout = self._bounded_timeout(3000)
             try:
-                page.wait_for_selector(step.selector, state="visible", timeout=timeout)
+                page.wait_for_selector(selector, state="visible", timeout=timeout)
             except Exception:
-                raise AssertionError(f"요소 '{step.selector}'가 화면에 보이지 않습니다")
+                raise AssertionError(f"요소 '{selector}'가 화면에 보이지 않습니다")
         elif action == "assert_text":
-            actual = page.locator(step.selector).first.inner_text(timeout=3000)
-            if step.value not in actual:
+            actual = page.locator(selector).first.inner_text(timeout=3000)
+            if value not in actual:
                 raise AssertionError(
-                    f"기대 텍스트 '{step.value}'가 없습니다 (실제: '{actual[:80]}')")
+                    f"기대 텍스트 '{value}'가 없습니다 (실제: '{actual[:80]}')")
         elif action == "assert_url":
-            if not re.search(step.value, page.url):
-                raise AssertionError(f"URL이 패턴 '{step.value}'와 일치하지 않습니다 (실제: {page.url})")
+            if not re.search(value, page.url):
+                raise AssertionError(f"URL이 패턴 '{value}'와 일치하지 않습니다 (실제: {page.url})")
         elif action == "assert_not_visible":
             # 요소가 아예 없거나(=hidden 대기 성공) 숨겨져야 통과. 짧은 대기 후 판정.
             try:
-                page.wait_for_selector(step.selector, state="hidden",
+                page.wait_for_selector(selector, state="hidden",
                                        timeout=self._bounded_timeout(3000))
             except Exception:
                 raise AssertionError(
-                    f"요소 '{step.selector}'가 화면에서 사라지지 않았습니다 (보이면 안 됨)")
+                    f"요소 '{selector}'가 화면에서 사라지지 않았습니다 (보이면 안 됨)")
         elif action == "assert_not_text":
-            loc = page.locator(step.selector).first
+            loc = page.locator(selector).first
             try:
                 actual = loc.inner_text(timeout=3000)
             except Exception:
                 actual = ""   # 요소 자체가 없으면 텍스트도 없는 것 → 통과
-            if step.value in actual:
+            if value in actual:
                 raise AssertionError(
-                    f"금지 텍스트 '{step.value}'가 존재합니다 (실제: '{actual[:80]}')")
+                    f"금지 텍스트 '{value}'가 존재합니다 (실제: '{actual[:80]}')")
+
+    def _exec_extract(self, page, step: Step, selector: str, record=None) -> None:
+        """화면의 값을 뽑아 변수에 담는다.
+
+        입력칸이면 표시 텍스트가 아니라 입력값을 읽는다 — 사람이 화면에서 보는
+        값이 그쪽이기 때문이다.
+        """
+        self._ensure_vars()
+        locator = page.locator(selector).first
+        try:
+            locator.wait_for(state="attached", timeout=self._bounded_timeout(5000))
+            tag = (locator.evaluate("el => el.tagName") or "").lower()
+            if tag in ("input", "textarea", "select"):
+                raw = locator.input_value(timeout=3000)
+            else:
+                raw = locator.inner_text(timeout=3000)
+        except RunDeadlineExceeded:
+            raise
+        except Exception as err:
+            raise AssertionError(
+                f"요소 '{selector}'에서 값을 읽지 못했습니다: {_short(err)}") from err
+
+        text = (raw or "").strip()
+        if step.pattern:
+            match = re.search(step.pattern, text)
+            if not match:
+                raise AssertionError(
+                    f"패턴 '{step.pattern}'에 맞는 값이 없습니다 (실제: '{text[:80]}')")
+            text = match.group(1).strip()
+        if not text:
+            raise AssertionError(f"요소 '{selector}'에서 읽은 값이 비어 있습니다")
+
+        self._vars[step.store_as] = text
+        if step.secret:
+            self._secret_vars.add(step.store_as)
+        if record is not None:
+            record.value = MASK if step.secret else text
 
     def _extract_all_pages(self, page, spec) -> tuple[list[str], list[list[str]]]:
         """표 추출 — pagination 설정 시 '다음' 버튼을 순회하며 전체 행을 수집."""
@@ -639,7 +739,8 @@ class Runner:
             if spec.query.api:
                 db_cols, db_rows = run_api_query(spec.query.api, self.cfg.target.base_url)
             else:
-                db_cols, db_rows = run_query(spec.query.db, spec.query.sql)
+                db_cols, db_rows = run_query(spec.query.db, spec.query.sql,
+                                         self._query_params(spec.query))
         except Exception as err:
             return DataCheckResult(note=f"정답원(DB/API) 조회 실패: {_short(err)}")
 
