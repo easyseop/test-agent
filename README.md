@@ -183,7 +183,7 @@ spec_checks:
 - 정답원 SQL 가드는 보수적 문자열 검사입니다 — 함수 호출까지 완전히 막지 못하므로 **DB 계정 자체를 read-only로 두는 것이 본 방어선**입니다
 - 접근성은 axe-core의 자동 판정 가능 규칙만 봅니다 — 실제 접근성 문제의 일부일 뿐이고, 기본 severity가 `info`라 판정에 영향을 주지 않습니다 (게이팅하려면 warn/fail로)
 - 시각 회귀 기준선(`baselines/`)은 실행 환경(폰트·렌더링)에 종속 — 같은 환경에서 생성·비교하고, 팀 공유 시 CI 등 단일 환경에서 생성할 것
-- 스텝 DSL이 아직 못 하는 동작 — 반복 실행(foreach), 2FA(TOTP)·메일 인증. **설계는 [docs/03-capability-roadmap.md](docs/03-capability-roadmap.md)에 확정돼 있습니다** (CAPTCHA 우회·실카드 결제는 영구 범위 밖). 화면 값 추출·재사용, iframe·새 창, 파일 업로드·마우스 동작은 구현 완료입니다
+- 스텝 DSL이 아직 못 하는 동작 — 2FA(TOTP)·메일 인증. **설계는 [docs/03-capability-roadmap.md](docs/03-capability-roadmap.md)에 확정돼 있습니다** (CAPTCHA 우회·실카드 결제는 영구 범위 밖). 화면 값 추출·재사용, iframe·새 창, 파일 업로드·마우스 동작, 반복 실행(foreach)은 구현 완료입니다
 
 로드맵과 백로그는 [docs/02-design.md](docs/02-design.md) §13, 검토 배경은 [docs/01-review.md](docs/01-review.md) 참조.
 개발 재개 상태와 다음 작업은 [HANDOFF.md](HANDOFF.md)를 기준으로 확인합니다.

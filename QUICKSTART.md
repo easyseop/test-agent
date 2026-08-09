@@ -120,6 +120,20 @@ steps:
   - {action: close_popup}                 # 원래 창으로 돌아온다
 ```
 
+**같은 검사를 여러 값에 반복** — 실행 전에 N개로 펼쳐지므로 리포트에 각각
+한 줄로 남고, 어느 항목이 깨졌는지 바로 보인다.
+
+```yaml
+spec_checks:
+  - name: "상태필터-{{status}}"                    # 이름에 값을 넣어 서로 구분
+    foreach: {var: status, in: [pending, shipped, delivered]}
+    # 또는  foreach: {var: status, in_file: statuses.json}
+    page: /
+    steps:
+      - {action: select, selector: "#status", value: "{{status}}"}
+      - {action: click, selector: "#apply"}
+```
+
 > **기대값은 설명서에서 가져온다.** 구현 코드의 WHERE절을 베끼면 구현 버그가
 > 기대값에 복제돼서 영원히 통과한다. 소스는 셀렉터·테이블명 확인용으로만 쓴다.
 

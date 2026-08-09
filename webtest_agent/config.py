@@ -1,6 +1,7 @@
 """설정(YAML) 로딩과 검증."""
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -556,6 +557,100 @@ def _parse_query(q_raw, where: str, allow_api: bool) -> QuerySpec:
     )
 
 
+# foreach가 한 번에 만들어 낼 수 있는 시나리오 수 상한. 실수로 수천 행짜리
+# 파일을 물리면 실행이 몇 시간이 되므로, 조용히 도는 대신 설정 오류로 세운다.
+MAX_FOREACH_ITEMS = 200
+
+# 검사 목록 — foreach 전개는 여기 모두에 똑같이 적용한다.
+_CHECK_KEYS = ("data_checks", "spec_checks", "write_checks",
+               "visual_checks", "responsive_checks", "perf_checks")
+
+
+def _substitute_one_var(node, name: str, value: str):
+    """설정 트리 전체에서 `{{name}}`만 값으로 바꾼다.
+
+    다른 이름의 `{{변수}}`(extract로 뽑는 값)는 건드리지 않는다. 그래야
+    foreach와 화면 값 추출을 한 시나리오에서 같이 쓸 수 있다.
+    """
+    if isinstance(node, str):
+        return re.sub(r"\{\{\s*" + re.escape(name) + r"\s*\}\}", value, node)
+    if isinstance(node, list):
+        return [_substitute_one_var(item, name, value) for item in node]
+    if isinstance(node, dict):
+        return {key: _substitute_one_var(item, name, value) for key, item in node.items()}
+    return node
+
+
+def _foreach_items(spec: dict, where: str, config_dir: Path) -> list[str]:
+    """반복할 값 목록 — 인라인 목록이거나 JSON 파일이다."""
+    inline = spec.get("in")
+    in_file = spec.get("in_file")
+    if bool(inline is None) == bool(in_file is None):
+        raise ConfigError(f"{where}.foreach: in 또는 in_file 중 정확히 하나를 지정하세요")
+
+    if in_file is not None:
+        raw_path = Path(str(in_file))
+        if raw_path.is_absolute():
+            raise ConfigError(
+                f"{where}.foreach.in_file: 설정 파일 폴더 기준 상대경로여야 합니다")
+        resolved = (config_dir / raw_path).resolve()
+        if not resolved.is_relative_to(config_dir):
+            raise ConfigError(
+                f"{where}.foreach.in_file: 설정 파일 폴더를 벗어납니다 ({in_file})")
+        if not resolved.is_file():
+            raise ConfigError(f"{where}.foreach.in_file: 파일이 없습니다 ({resolved})")
+        try:
+            inline = json.loads(resolved.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as err:
+            raise ConfigError(f"{where}.foreach.in_file: 읽을 수 없습니다 — {err}") from err
+
+    if not isinstance(inline, list) or not inline:
+        raise ConfigError(f"{where}.foreach: 값 목록은 비어 있지 않은 배열이어야 합니다")
+    if len(inline) > MAX_FOREACH_ITEMS:
+        raise ConfigError(
+            f"{where}.foreach: 값이 {len(inline)}개입니다. 한 번에 만들 수 있는 "
+            f"시나리오는 {MAX_FOREACH_ITEMS}개까지입니다")
+    for item in inline:
+        if isinstance(item, (dict, list)):
+            raise ConfigError(
+                f"{where}.foreach: 값은 문자열·숫자여야 합니다 (중첩 구조는 쓸 수 없습니다)")
+    return [str(item) for item in inline]
+
+
+def _expand_foreach(raw_list, where_prefix: str, config_dir: Path) -> list:
+    """foreach가 붙은 검사를 N개의 독립 시나리오로 미리 펼친다.
+
+    실행 중에 반복하지 않고 계획 단계에서 펼치는 이유는 결정성이다. 펼쳐 두면
+    리포트에 각각 한 줄로 남고, 병렬 실행과 직전 실행 비교도 개별로 된다.
+    """
+    expanded: list = []
+    for index, raw in enumerate(raw_list or []):
+        where = f"{where_prefix}[{index}]"
+        spec = raw.get("foreach") if isinstance(raw, dict) else None
+        if not spec:
+            expanded.append(raw)
+            continue
+        if not isinstance(spec, dict) or not spec.get("var"):
+            raise ConfigError(f"{where}.foreach: var가 필요합니다 (예: {{var: item, in: [a, b]}})")
+        name = str(spec["var"])
+        if not _VAR_NAME_RX.fullmatch(name):
+            raise ConfigError(
+                f"{where}.foreach.var: '{name}'은 영문자·숫자·밑줄만 쓸 수 있습니다")
+
+        body = {key: value for key, value in raw.items() if key != "foreach"}
+        seen_names: set[str] = set()
+        for item in _foreach_items(spec, where, config_dir):
+            one = _substitute_one_var(body, name, item)
+            one_name = str(one.get("name", ""))
+            if one_name in seen_names:
+                raise ConfigError(
+                    f"{where}.foreach: 펼친 시나리오 이름이 '{one_name}'로 겹칩니다. "
+                    f"name에 {{{{{name}}}}}를 넣어 서로 다르게 하세요")
+            seen_names.add(one_name)
+            expanded.append(one)
+    return expanded
+
+
 def load_config(path: str | Path) -> AgentConfig:
     p = Path(path)
     if not p.exists():
@@ -563,6 +658,13 @@ def load_config(path: str | Path) -> AgentConfig:
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ConfigError("설정 파일 최상위는 매핑이어야 합니다")
+
+    # foreach는 다른 어떤 파싱보다 먼저 펼친다. 펼친 뒤에는 평범한 검사 목록이
+    # 되므로 아래 로직 전부가 반복을 몰라도 된다.
+    config_dir = p.resolve().parent
+    for key in _CHECK_KEYS:
+        if data.get(key):
+            data[key] = _expand_foreach(data[key], key, config_dir)
 
     t = _sub(data, "target")
     if not t.get("base_url"):
