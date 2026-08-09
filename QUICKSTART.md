@@ -134,6 +134,23 @@ spec_checks:
       - {action: click, selector: "#apply"}
 ```
 
+**2단계 인증(6자리 코드)** — 코드는 30초마다 바뀌므로 입력하기 직전에 만들어진다.
+비밀키는 환경변수로만 받고 리포트에는 `***`로 남는다.
+
+```yaml
+- {action: fill, selector: "#otp", value: "${TOTP:MY_2FA_SECRET}"}
+```
+
+**인증 메일 확인** — 메일이 실제로 왔는지는 화면만 봐서는 알 수 없다.
+테스트용 메일함(Mailpit·MailHog 등)의 조회 API에서 링크를 뽑아 온다.
+
+```yaml
+- {action: fetch, value: "http://127.0.0.1:8025/api/v1/message/latest",
+   store_as: verify_link, json_path: html,
+   pattern: 'href="(http[^"]+/verify[^"]+)"'}
+- {action: goto, value: "{{verify_link}}"}
+```
+
 > **기대값은 설명서에서 가져온다.** 구현 코드의 WHERE절을 베끼면 구현 버그가
 > 기대값에 복제돼서 영원히 통과한다. 소스는 셀렉터·테이블명 확인용으로만 쓴다.
 

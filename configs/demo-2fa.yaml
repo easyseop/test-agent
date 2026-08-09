@@ -1,0 +1,53 @@
+# 2단계 인증 로그인과 인증 메일 확인 시연
+#   DEMO_2FA_SECRET=JBSWY3DPEHPK3PXP ./scripts/run_demo.sh --2fa
+#
+# 인증 코드는 30초마다 바뀌므로 설정을 읽을 때가 아니라 **입력하기 직전에**
+# 만들어진다. 비밀키는 환경변수로만 받고 리포트에는 ***로 남는다.
+target: {base_url: 'http://127.0.0.1:5057', settle_ms: 300}
+crawl: {enabled: false}
+button_sweep: {enabled: false}
+
+spec_checks:
+  - name: F1-2단계인증-로그인성공
+    description: 아이디·비밀번호 뒤에 인증 코드까지 넣으면 로그인이 완료되어야 한다
+    page: /login-2fa
+    steps:
+      - {action: fill, selector: "#username", value: demo}
+      - {action: fill, selector: "#password", value: "${DEMO_PASSWORD}"}
+      - {action: click, selector: "#login-btn"}
+      - {action: wait_for, selector: "#otp-code"}
+      - {action: fill, selector: "#otp-code", value: "${TOTP:DEMO_2FA_SECRET}"}
+      - {action: click, selector: "#verify-btn"}
+      - {action: assert_visible, selector: "#signed-in"}
+
+  - name: F2-틀린인증코드-거부
+    description: 인증 코드가 틀리면 로그인이 완료되지 않아야 한다
+    page: /login-2fa
+    steps:
+      - {action: fill, selector: "#username", value: demo}
+      - {action: fill, selector: "#password", value: "${DEMO_PASSWORD}"}
+      - {action: click, selector: "#login-btn"}
+      - {action: fill, selector: "#otp-code", value: "000000"}
+      - {action: click, selector: "#verify-btn"}
+      - {action: assert_not_visible, selector: "#signed-in"}
+      - {action: assert_text, selector: "#login-error", value: "올바르지 않습니다"}
+
+  - name: F3-인증메일-링크확인
+    description: 인증 메일의 링크를 따라가면 확인 완료가 되어야 한다
+    page: /
+    steps:
+      # 메일함은 JSON을 주므로 본문을 먼저 꺼낸 뒤 링크를 뽑는다
+      - {action: fetch, value: "/api/mail/latest", store_as: verify_link,
+         json_path: html,
+         pattern: 'href="(http[^"]+/verify\?token=[^"]+)"'}
+      - {action: goto, value: "{{verify_link}}"}
+      - {action: assert_text, selector: "#verify-state", value: "확인 완료"}
+
+  - name: F4-잘못된토큰-확인실패
+    description: 토큰이 틀리면 확인이 실패해야 한다 (F3이 헛통과가 아님을 보임)
+    page: "/verify?token=아무거나"
+    steps:
+      - {action: assert_text, selector: "#verify-state", value: "확인 실패"}
+
+report:
+  title: 2단계 인증·인증 메일 시연

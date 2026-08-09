@@ -54,7 +54,7 @@ def test_store_as_and_pattern_rejected_on_other_actions():
 
 def test_variable_must_be_extracted_before_use():
     steps = [_step(action="goto", value="/orders/{{order_no}}")]
-    with pytest.raises(ConfigError, match="extract로 먼저"):
+    with pytest.raises(ConfigError, match="먼저 만들어야"):
         validate_step_vars(steps, "spec_checks[0]")
 
 
@@ -72,7 +72,7 @@ def test_double_extract_of_same_name_rejected():
         _step(action="extract", selector="#a", store_as="v"),
         _step(action="extract", selector="#b", store_as="v"),
     ]
-    with pytest.raises(ConfigError, match="두 번 추출"):
+    with pytest.raises(ConfigError, match="두 번 만듭니다"):
         validate_step_vars(steps, "spec_checks[0]")
 
 
@@ -121,7 +121,7 @@ def test_params_var_must_be_extracted(tmp_path):
     text = _cfg_text("SELECT a FROM t WHERE id = :order_no",
                      "      params: {order_no: '{{nope}}'}")
     p.write_text(text, encoding="utf-8")
-    with pytest.raises(ConfigError, match="extract로 뽑지 않았습니다"):
+    with pytest.raises(ConfigError, match="만들지 않았습니다"):
         load_config(p)
 
 

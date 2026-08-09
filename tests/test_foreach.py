@@ -220,7 +220,7 @@ spec_checks:
 
 def test_foreach_does_not_bypass_the_extract_rule(tmp_path):
     """foreach를 썼다고 '뽑기 전에 쓰기'가 허용되면 안 된다."""
-    with pytest.raises(ConfigError, match="extract로 먼저"):
+    with pytest.raises(ConfigError, match="먼저 만들어야"):
         _cfg(tmp_path, """
 spec_checks:
   - name: "x-{{item}}"

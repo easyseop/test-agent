@@ -26,6 +26,11 @@ _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _VAR_RX = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 _VAR_NAME_RX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
+# 2단계 인증 코드. `${VAR}`와 달리 **설정을 읽는 시점에 값을 만들지 않는다** —
+# 코드는 30초마다 바뀌므로 로딩 때 만들어 두면 실행 시점에는 이미 만료된다.
+# 여기서는 비밀키가 있는지만 확인하고, 실제 코드는 스텝을 실행할 때 만든다.
+_TOTP_RX = re.compile(r"\$\{TOTP:([A-Za-z_][A-Za-z0-9_]*)\}")
+
 
 def var_refs(text: str | None) -> list[str]:
     """문자열이 참조하는 `{{변수}}` 이름들."""
@@ -55,11 +60,13 @@ def validate_step_vars(steps: list["Step"], where: str) -> None:
             if name not in known:
                 raise ConfigError(
                     f"{where}.steps[{i - 1}]: 변수 '{{{{{name}}}}}'를 쓰기 전에 "
-                    f"extract로 먼저 뽑아야 합니다 (변수는 같은 시나리오 안에서만 유효)")
-        if step.action == "extract" and step.store_as:
+                    f"extract·fetch로 먼저 만들어야 합니다 "
+                    "(변수는 같은 시나리오 안에서만 유효)")
+        # 변수를 만드는 동작은 extract(화면)와 fetch(앱 바깥 정답원) 둘이다.
+        if step.store_as:
             if step.store_as in known:
                 raise ConfigError(
-                    f"{where}.steps[{i - 1}]: 변수 '{step.store_as}'를 두 번 추출합니다 "
+                    f"{where}.steps[{i - 1}]: 변수 '{step.store_as}'를 두 번 만듭니다 "
                     "(덮어쓰면 앞 단계의 기대값이 조용히 바뀝니다)")
             known.add(step.store_as)
 
@@ -85,13 +92,36 @@ def _expand_env(value: str, where: str) -> str:
     return _ENV_RX.sub(repl, value)
 
 
+def totp_refs(text: str | None) -> list[str]:
+    """`${TOTP:이름}`이 참조하는 환경변수 이름들."""
+    return [] if text is None else _TOTP_RX.findall(text)
+
+
+def _check_totp_refs(value: str, where: str) -> None:
+    """비밀키가 준비됐는지 로딩 때 미리 본다.
+
+    실행 도중 로그인 단계에서야 "환경변수가 없다"를 알면 이미 브라우저를 띄우고
+    시간을 쓴 뒤다. 여기서 먼저 세운다.
+    """
+    from .totp import TotpError, generate
+    for name in totp_refs(value):
+        if name not in os.environ:
+            raise ConfigError(
+                f"{where}: 환경변수 {name}가 설정되어 있지 않습니다 "
+                f"(${{TOTP:{name}}} — 2단계 인증 비밀키)")
+        try:
+            generate(os.environ[name])
+        except TotpError as err:
+            raise ConfigError(f"{where}: {name} — {err}") from err
+
+
 def _is_secret_step(raw_value: str | None, selector: str | None) -> bool:
     """이 스텝의 값을 증거에 남기면 안 되는가.
 
     ① `${VAR}` 치환이 일어났다 — 설정에 평문으로 두지 않으려 한 값이므로 비밀로 본다.
     ② selector가 비밀번호·토큰 입력을 가리킨다 — 치환을 쓰지 않았어도 가린다.
     """
-    if raw_value is not None and _ENV_RX.search(raw_value):
+    if raw_value is not None and (_ENV_RX.search(raw_value) or _TOTP_RX.search(raw_value)):
         return True
     return bool(selector and _SECRET_SELECTOR_RX.search(selector))
 
@@ -101,6 +131,8 @@ STEP_ACTIONS = {
     "assert_visible", "assert_text", "assert_url",
     "assert_not_visible", "assert_not_text",
     "extract",
+    # 테스트용 메일함 같은 '앱 바깥 정답원'에서 값을 가져온다
+    "fetch",
     # 새 창 — 결제창·소셜 로그인처럼 별도 창으로 뜨는 흐름
     "wait_popup", "close_popup",
     # 마우스·파일 조작
@@ -113,9 +145,9 @@ _NEEDS_SELECTOR = {"click", "fill", "select", "check", "press", "wait_for",
                    "upload", "hover", "scroll_to", "drag"}
 _NEEDS_VALUE = {"goto", "fill", "select", "press", "wait_ms", "assert_text", "assert_url",
                 "assert_not_text",
-                "upload", "drag"}
+                "upload", "drag", "fetch"}
 # 새 창 안에서는 프레임 지정이 의미가 없거나(창 전환 자체) 대상이 없다.
-_NO_FRAME = {"wait_popup", "close_popup", "goto", "wait_ms", "assert_url"}
+_NO_FRAME = {"wait_popup", "close_popup", "goto", "wait_ms", "assert_url", "fetch"}
 
 
 @dataclass
@@ -129,6 +161,10 @@ class Step:
     # 이 스텝이 조작할 iframe. 중첩은 'iframe#a >> iframe#b'.
     # 결제창·주소검색처럼 화면 안의 다른 문서를 다룰 때 쓴다.
     frame: str | None = None
+    # fetch 전용 — JSON 응답에서 꺼낼 위치. 'html' 또는 'messages.0.html'.
+    # 테스트 메일함은 대개 JSON을 주는데, 그 안의 따옴표가 이스케이프돼 있어
+    # 본문에 정규식을 바로 걸면 맞지 않는다.
+    json_path: str | None = None
 
     @property
     def log_value(self) -> str | None:
@@ -153,9 +189,9 @@ class Step:
 
         store_as = d.get("store_as")
         pattern = d.get("pattern")
-        if action == "extract":
+        if action in ("extract", "fetch"):
             if not store_as:
-                raise ConfigError(f"{where}: action 'extract'에는 store_as가 필요합니다")
+                raise ConfigError(f"{where}: action '{action}'에는 store_as가 필요합니다")
             store_as = str(store_as)
             if not _VAR_NAME_RX.fullmatch(store_as):
                 raise ConfigError(
@@ -170,11 +206,23 @@ class Step:
                     raise ConfigError(
                         f"{where}.pattern: 그룹이 정확히 1개여야 합니다 "
                         f"(현재 {compiled.groups}개). 예: '주문번호 ([0-9]+)'")
+            if action == "fetch" and not str(value).lower().startswith(("http://", "https://", "/")):
+                raise ConfigError(
+                    f"{where}: fetch의 value는 http(s) 주소이거나 '/'로 시작하는 "
+                    "경로여야 합니다")
         else:
             if store_as is not None:
-                raise ConfigError(f"{where}: store_as는 action 'extract'에서만 씁니다")
+                raise ConfigError(f"{where}: store_as는 action 'extract'·'fetch'에서만 씁니다")
             if pattern is not None:
-                raise ConfigError(f"{where}: pattern은 action 'extract'에서만 씁니다")
+                raise ConfigError(f"{where}: pattern은 action 'extract'·'fetch'에서만 씁니다")
+
+        json_path = d.get("json_path")
+        if json_path is not None:
+            if action != "fetch":
+                raise ConfigError(f"{where}: json_path는 action 'fetch'에서만 씁니다")
+            json_path = str(json_path).strip()
+            if not json_path:
+                raise ConfigError(f"{where}.json_path: 빈 값은 쓸 수 없습니다")
 
         frame = d.get("frame")
         if frame is not None:
@@ -189,9 +237,11 @@ class Step:
         raw_value = None if value is None else str(value)
         secret = _is_secret_step(raw_value, selector)
         if raw_value is not None:
+            _check_totp_refs(raw_value, where)
             value = _expand_env(raw_value, where)
         return cls(action=action, selector=selector, value=value, secret=secret,
-                   store_as=store_as, pattern=pattern, frame=frame)
+                   store_as=store_as, pattern=pattern, frame=frame,
+                   json_path=json_path)
 
 
 @dataclass
@@ -492,13 +542,13 @@ def _validate_query_vars(query: QuerySpec | None, steps: list[Step], where: str)
     """정답 쿼리 파라미터가 참조하는 변수도 스텝에서 먼저 추출돼야 한다."""
     if query is None:
         return
-    extracted = {s.store_as for s in steps if s.action == "extract" and s.store_as}
+    extracted = {s.store_as for s in steps if s.store_as}
     for name, raw in query.params.items():
         for ref in var_refs(raw):
             if ref not in extracted:
                 raise ConfigError(
                     f"{where}.query.params.{name}: 변수 '{{{{{ref}}}}}'를 이 시나리오의 "
-                    "스텝에서 extract로 뽑지 않았습니다")
+                    "스텝에서 extract·fetch로 만들지 않았습니다")
 
 
 def _parse_query(q_raw, where: str, allow_api: bool) -> QuerySpec:

@@ -232,6 +232,55 @@ def attach():
     return render_template("attach.html", info=info)
 
 
+# ── 2단계 인증과 테스트용 메일함 흉내 ──────────────────────────────
+#
+# 2FA 로그인과 "인증 메일의 링크를 눌러 확인"은 실제 앱에 흔한 흐름인데 화면만
+# 봐서는 검증할 수 없다. 외부 서비스 없이 같은 구조를 흉내 낸다.
+#
+# 주의: 코드 검증에 webtest_agent.totp를 그대로 쓴다. 따라서 이 데모는 **배선이
+# 되는지**를 보여줄 뿐 TOTP 계산이 맞는지는 증명하지 않는다. 계산의 정확성은
+# RFC 6238 표준 시험값으로 단위 테스트에서 확인한다.
+
+DEMO_2FA_SECRET = os.environ.get("DEMO_2FA_SECRET", "JBSWY3DPEHPK3PXP")
+_VERIFY_TOKEN = "demo-verify-token-4815162342"
+
+
+@app.route("/login-2fa", methods=["GET", "POST"])
+def login_2fa():
+    stage = request.form.get("stage", "password")
+    error = ""
+    if request.method == "POST" and stage == "password":
+        if request.form.get("username") == "demo" and request.form.get("password") == "demo1234":
+            return render_template("login_2fa.html", stage="code", error="")
+        error = "아이디 또는 비밀번호가 올바르지 않습니다"
+    elif request.method == "POST" and stage == "code":
+        import sys
+        sys.path.insert(0, os.path.dirname(BASE))
+        from webtest_agent.totp import generate
+        if request.form.get("code", "").strip() == generate(DEMO_2FA_SECRET):
+            return render_template("login_2fa.html", stage="done", error="")
+        return render_template("login_2fa.html", stage="code",
+                               error="인증 코드가 올바르지 않습니다")
+    return render_template("login_2fa.html", stage="password", error=error)
+
+
+@app.route("/api/mail/latest")
+def mail_latest():
+    """테스트용 메일함 흉내 — 가장 최근 메일 하나를 돌려준다."""
+    link = request.url_root.rstrip("/") + f"/verify?token={_VERIFY_TOKEN}"
+    return {
+        "to": "demo@example.test",
+        "subject": "이메일 주소를 확인해 주세요",
+        "html": f'<p>아래 링크를 눌러 확인하세요.</p><p><a href="{link}">확인하기</a></p>',
+    }
+
+
+@app.route("/verify")
+def verify():
+    ok = request.args.get("token") == _VERIFY_TOKEN
+    return render_template("verify.html", ok=ok)
+
+
 @app.route("/favicon.ico")
 def favicon():
     return Response(status=204)

@@ -1,6 +1,7 @@
 """시나리오 실행(Execute)과 판정(Verify)."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -9,14 +10,16 @@ from dataclasses import replace
 from pathlib import Path
 
 from .browser import BrowserSession, save_screenshot
-from .config import MASK, AgentConfig, Step, substitute_vars
+from .config import MASK, AgentConfig, Step, substitute_vars, totp_refs
 from .datacheck import (compare, extract_table, parse_count, run_api_query,
                         run_query, run_scalar_query)
 from .models import (FAIL, PASS, WARN, DataCheckResult, PerfResult,
                      ResponsiveResult, ScenarioResult, StepResult,
                      ViewportResult, VisualResult, WriteCheckResult)
-from .scenarios import Scenario, slugify
 from .safety import find_destructive, find_hard_block
+from .scenarios import Scenario, slugify
+from .totp import TotpError
+from .totp import generate as totp_generate
 from .visual import compare_images
 
 
@@ -96,6 +99,7 @@ def _describe_action(step: Step, sel: str, val: str | None) -> str:
         "assert_not_visible": f"{sel} 요소가 화면에 보이지 않는지 확인한다",
         "assert_not_text": f"{sel} 요소에 '{val}' 텍스트가 없는지 확인한다",
         "extract": f"{sel}의 값을 읽어 '{step.store_as}'에 담는다",
+        "fetch": f"{val} 를 불러와 '{step.store_as}'에 담는다",
         "wait_popup": "새 창이 열릴 때까지 기다렸다가 그 창으로 옮긴다",
         "close_popup": "새 창을 닫고 원래 창으로 돌아온다",
         "upload": f"{sel}에 파일 '{val}'을 올린다",
@@ -157,6 +161,33 @@ JS_PERF = """(metric) => {
 _GUARDED_ACTIONS = {"click", "drag"}
 
 
+def _json_at(body: str, path: str, where: str) -> str:
+    """JSON 응답에서 한 곳을 꺼낸다. 'html' 또는 'messages.0.html' 형태.
+
+    테스트 메일함은 본문을 JSON 문자열로 감싸 돌려주므로 따옴표가 이스케이프돼
+    있다. 본문에 정규식을 바로 걸면 맞지 않으니 먼저 꺼내서 푼다.
+    """
+    try:
+        node = json.loads(body)
+    except json.JSONDecodeError as err:
+        raise AssertionError(f"{where} 응답이 JSON이 아닙니다: {err}") from err
+    for part in path.split("."):
+        if isinstance(node, list):
+            try:
+                node = node[int(part)]
+            except (ValueError, IndexError) as err:
+                raise AssertionError(
+                    f"{where} 응답에 '{path}' 위치가 없습니다 (목록 인덱스 '{part}')") from err
+        elif isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            raise AssertionError(f"{where} 응답에 '{path}' 위치가 없습니다 ('{part}'에서 막힘)")
+    if isinstance(node, (dict, list)):
+        raise AssertionError(
+            f"{where} 응답의 '{path}'가 문자열이 아닙니다 (더 안쪽 위치를 지정하세요)")
+    return str(node)
+
+
 def _dom_size(page) -> int:
     try:
         return page.evaluate("() => document.body ? document.body.innerHTML.length : 0")
@@ -184,6 +215,9 @@ class Runner:
     def _reset_vars(self) -> None:
         self._vars = {}
         self._secret_vars = set()
+        # 실행 중에 만들어진 비밀 문자열(2단계 인증 코드 등). 설정에는 자리표시자만
+        # 있고 실제 값은 여기서만 생기므로, 오류 메시지 마스킹도 여기서 챙긴다.
+        self._secret_literals: set[str] = set()
 
     def _ensure_vars(self) -> None:
         """변수 저장소가 반드시 있게 한다.
@@ -196,23 +230,48 @@ class Runner:
             self._reset_vars()
 
     def _resolve(self, text: str | None) -> str | None:
-        """`{{변수}}`를 이번 시나리오에서 뽑은 값으로 바꾼다."""
+        """`{{변수}}`와 `${TOTP:키}`를 실행 시점의 실제 값으로 바꾼다."""
         if text is None:
             return None
         self._ensure_vars()
         try:
-            return substitute_vars(text, self._vars)
+            text = substitute_vars(text, self._vars)
         except KeyError as err:
             raise AssertionError(
                 f"변수 '{{{{{err.args[0]}}}}}'가 아직 추출되지 않았습니다") from err
+        return self._fill_totp(text)
+
+    def _fill_totp(self, text: str):
+        """2단계 인증 코드는 **쓰기 직전에** 만든다.
+
+        코드는 30초마다 바뀐다. 설정을 읽는 시점에 만들어 두면 시나리오가 몇 개
+        지난 뒤에는 이미 만료된 값이라 로그인이 실패한다.
+        """
+        names = totp_refs(text)
+        if not names:
+            return text
+        for name in names:
+            secret = os.environ.get(name)
+            if not secret:
+                raise AssertionError(
+                    f"환경변수 {name}가 없습니다 (2단계 인증 비밀키)")
+            try:
+                code = totp_generate(secret)
+            except TotpError as err:
+                raise AssertionError(f"2단계 인증 코드를 만들지 못했습니다: {err}") from err
+            self._secret_literals.add(code)
+            text = text.replace(f"${{TOTP:{name}}}", code)
+        return text
 
     def _mask_vars(self, text: str) -> str:
-        """비밀로 판정된 추출값이 메시지·증거에 섞여 나오지 않게 가린다."""
+        """실행 중에 생긴 비밀값이 메시지·증거에 섞여 나오지 않게 가린다."""
         self._ensure_vars()
         for name in self._secret_vars:
             value = self._vars.get(name)
             if value:
                 text = text.replace(value, MASK)
+        for literal in self._secret_literals:
+            text = text.replace(literal, MASK)
         return text
 
     # ── 새 창(팝업)과 iframe ─────────────────────────────────────
@@ -621,6 +680,8 @@ class Runner:
             self._wait(page, int(value))
         elif action == "extract":
             self._exec_extract(scope, step, selector, record)
+        elif action == "fetch":
+            self._exec_fetch(page, step, value, record)
         elif action == "upload":
             locator.set_input_files(self._upload_path(value))
         elif action == "hover":
@@ -659,6 +720,53 @@ class Runner:
             if value in actual:
                 raise AssertionError(
                     f"금지 텍스트 '{value}'가 존재합니다 (실제: '{actual[:80]}')")
+
+    def _exec_fetch(self, page, step: Step, url: str, record=None) -> None:
+        """앱 바깥의 정답원에서 값을 가져와 변수에 담는다.
+
+        쓰임새는 **테스트용 메일함**이다. 회원가입 인증 메일이 실제로 왔는지,
+        그 안의 인증 링크가 무엇인지는 화면만 봐서는 알 수 없다. Mailpit·MailHog
+        같은 테스트 메일함의 조회 API를 읽어 링크를 뽑아 온다.
+
+        브라우저의 요청 기능을 그대로 쓴다. 로그인 세션·쿠키가 이미 붙어 있고,
+        네트워크 감시와 타임아웃 규칙도 같이 적용되기 때문이다.
+        """
+        self._ensure_vars()
+        target = url if "://" in url else self.cfg.target.base_url.rstrip("/") + url
+        try:
+            response = self._active_page(page).request.get(
+                target, timeout=self._bounded_timeout(10000))
+        except RunDeadlineExceeded:
+            raise
+        except Exception as err:
+            raise AssertionError(f"{target} 를 불러오지 못했습니다: {_short(err)}") from err
+        if response.status >= 400:
+            raise AssertionError(f"{target} 가 HTTP {response.status}로 응답했습니다")
+
+        body = response.text()
+        if step.json_path:
+            body = _json_at(body, step.json_path, target)
+        text = body.strip()
+        if step.pattern:
+            match = re.search(step.pattern, body)
+            if not match:
+                raise AssertionError(
+                    f"패턴 '{step.pattern}'에 맞는 값이 응답에 없습니다 "
+                    f"(응답 앞부분: '{body[:80]}')")
+            text = match.group(1).strip()
+        elif len(text) > 2000:
+            # 패턴 없이 통째로 담으면 리포트가 응답 본문으로 뒤덮인다.
+            raise AssertionError(
+                "응답이 너무 깁니다. pattern으로 필요한 부분만 뽑으세요 "
+                f"({len(text)}자)")
+        if not text:
+            raise AssertionError(f"{target} 응답에서 읽은 값이 비어 있습니다")
+
+        self._vars[step.store_as] = text
+        if step.secret:
+            self._secret_vars.add(step.store_as)
+        if record is not None:
+            record.value = MASK if step.secret else text
 
     def _exec_wait_popup(self, page, monitor) -> None:
         """새 창이 열릴 때까지 기다렸다가 조작 대상을 그 창으로 옮긴다."""

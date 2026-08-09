@@ -77,6 +77,7 @@ def test_describe_step_covers_every_action():
         "upload": {"selector": "#f", "value": "a.txt"},
         "drag": {"selector": "#a", "value": "#b"},
         "extract": {"selector": "#a", "store_as": "v"},
+        "fetch": {"value": "/api/x", "store_as": "v"},
     }
     for action in sorted(STEP_ACTIONS):
         kwargs = samples.get(action)

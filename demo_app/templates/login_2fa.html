@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>2단계 인증 로그인 — 주문 관리 대시보드</title>
+<style>
+body{font-family:'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;margin:0;background:#f5f6f8;color:#1f2937}
+.wrap{max-width:420px;margin:0 auto;padding:24px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px 20px}
+label{display:block;margin:8px 0}
+input,button{font:inherit;padding:6px 10px}
+.err{color:#b91c1c;font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>로그인</h1>
+  <div class="card">
+    {% if stage == 'password' %}
+    <form method="post">
+      <input type="hidden" name="stage" value="password">
+      <label>아이디 <input id="username" name="username"></label>
+      <label>비밀번호 <input id="password" name="password" type="password"></label>
+      <button id="login-btn" type="submit">로그인</button>
+    </form>
+    {% elif stage == 'code' %}
+    <p id="code-prompt">인증 앱의 6자리 코드를 입력하세요.</p>
+    <form method="post">
+      <input type="hidden" name="stage" value="code">
+      <label>인증 코드 <input id="otp-code" name="code" inputmode="numeric" autocomplete="one-time-code"></label>
+      <button id="verify-btn" type="submit">확인</button>
+    </form>
+    {% else %}
+    <p id="signed-in">로그인 완료</p>
+    <p><a id="back-home" href="/">← 대시보드로</a></p>
+    {% endif %}
+    {% if error %}<p class="err" id="login-error">{{ error }}</p>{% endif %}
+  </div>
+</div>
+</body>
+</html>
