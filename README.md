@@ -37,7 +37,7 @@
 | 접근성 기본 상태 | `a11y.enabled` — 동봉한 axe-core(WCAG 2.1 AA 규칙, 한국어 로케일)를 페이지에 주입해 점검. 폐쇄망에서도 같은 버전으로 동작 | `a11y.severity`: info(기본·정보성) / warn / fail 로 판정 게이팅 선택 |
 | 위험 버튼 안전장치 | 자동 스윕은 저장·삭제·결제·발송·로그아웃 등을 설정과 실행 양쪽에서 차단 | 이유와 함께 리포트에 기록 |
 
-또한 매 실행마다 **직전 실행과 비교(diff)** 해 "신규 실패 / 복구 / 계속 실패"를 리포트와 CLI에 표시하고, `target.flaky_recheck: true`면 실패 시나리오를 1회 재실행해 간헐(flaky) 의심을 경고로 구분하며, `notify.webhook_url`을 설정하면 실행 결과를 **웹훅(Slack Incoming Webhook 호환)** 으로 전송합니다.
+또한 매 실행마다 **직전 실행과 비교(diff)** 해 "신규 실패 / 복구 / 계속 실패"를 리포트와 CLI에 표시하며, `history` 명령으로 **최근 N회 추이 표**를 볼 수 있습니다(언제부터 깨졌는지·간헐적으로 흔들리는지 구분).  `target.flaky_recheck: true`면 실패 시나리오를 1회 재실행해 간헐(flaky) 의심을 경고로 구분하며, `notify.webhook_url`을 설정하면 실행 결과를 **웹훅(Slack Incoming Webhook 호환)** 으로 전송합니다.
 
 **병렬 실행**: `run --workers N`으로 읽기 전용 시나리오를 N개 워커(각자 독립 브라우저)로 병렬 실행합니다. 쓰기 검증(`write_checks`)은 상태를 바꾸므로 항상 직렬·최후에 실행하고, **리포트 순서는 완료 순서가 아니라 입력 순서로 고정**해 판정 결정성을 지킵니다(같은 결과를 더 빠르게). 기본값은 1(직렬).
 
@@ -78,6 +78,7 @@ python3 demo_app/seed.py                 # 데모 DB 시드 (고정 시드, 재�
 python3 demo_app/app.py &                # 데모앱 기동 (DEMO_BUG=1 로 버그 주입)
 python3 -m webtest_agent run -c configs/demo.yaml
 python3 -m webtest_agent discover -c configs/demo.yaml   # 크롤링·인벤토리만
+python3 -m webtest_agent history  -c configs/demo.yaml   # 최근 실행들의 추이 표
 ```
 
 ## 산출물 (`runs/<타임스탬프>/`)

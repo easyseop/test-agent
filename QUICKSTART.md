@@ -188,6 +188,13 @@ python -m webtest_agent run -c configs/우리사이트.yaml
 
 매 실행마다 직전 실행과 비교해서 **신규 실패 / 복구 / 계속 실패**를 표시한다.
 
+여러 번 쌓인 뒤에는 추이를 볼 수 있다. "오늘 처음 깨졌다"와 "지난주부터 계속
+깨져 있다"를 구분할 수 있고, 자주 뒤집히는 검사는 따로 표시된다.
+
+```bash
+python -m webtest_agent history -c configs/우리사이트.yaml
+```
+
 ## 5. 지켜야 할 것
 
 - **테스트·스테이징 환경에서 돌린다.** 운영 DB는 read-only 계정으로 조회 검증만.

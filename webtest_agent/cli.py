@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import platform
 import sys
 from datetime import datetime
@@ -12,8 +13,8 @@ from . import __version__
 from .browser import ENGINES, BrowserSession
 from .config import AgentConfig, ConfigError, load_config
 from .discovery import Discovery, crawl
-from .history import diff_for
-from .models import FAIL, STATUS_LABEL, WARN, RunMeta
+from .history import build_trend, diff_for
+from .models import FAIL, PASS, STATUS_LABEL, WARN, RunMeta
 from .notify import build_payload, send_webhook
 from .report import write_reports
 from .reset import ResetFailed, ResetOutcome, run_write_reset
@@ -647,6 +648,50 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 1 if unresolved else 0
 
 
+_TREND_MARK = {PASS: "○", WARN: "△", FAIL: "✗"}
+
+
+def cmd_history(args: argparse.Namespace) -> int:
+    """최근 실행들의 시나리오별 추이를 표로 보여준다.
+
+    직전 1회 비교로는 "오늘 처음 깨졌다"와 "지난주부터 계속 깨져 있다"를
+    구분할 수 없다. 브라우저를 띄우지 않고 이미 쌓인 report.json만 읽는다.
+    """
+    cfg = load_config(args.config)
+    root = Path(args.out) if args.out else Path(cfg.output_dir)
+    # run이 report.json에 남기는 키와 정확히 같아야 한다. 형태가 다르면
+    # 같은 설정의 실행인데도 못 찾는다.
+    identity = (cfg.target.base_url, cfg.config_path)
+    trend = build_trend(root, identity=identity, limit=max(1, int(args.limit)))
+
+    if args.json:
+        print(json.dumps(trend, ensure_ascii=False, indent=2))
+        return 0
+
+    runs = trend["runs"]
+    if not runs:
+        print(f"{root} 에서 비교할 실행 기록을 찾지 못했습니다 "
+              f"(대상 {cfg.target.base_url}, 설정 {args.config})")
+        return 0
+
+    print(f"최근 실행 {len(runs)}회 · 대상 {cfg.target.base_url}")
+    print(f"  {'○ 통과':8} {'△ 경고':8} {'✗ 실패':8} {'· 해당 실행에 없던 시나리오'}")
+    if trend["skipped_infra_runs"]:
+        print(f"  실행 불가라 통계에서 제외: {', '.join(trend['skipped_infra_runs'])}")
+    print()
+    print(f"  {'':44} {' '.join(r['run'][-6:] for r in runs)}")
+    for row in trend["scenarios"]:
+        marks = " ".join(_TREND_MARK.get(s, "·").center(6) for s in row["history"])
+        flag = "  ← 판정이 자주 뒤집힘" if row["flips"] >= 3 else ""
+        print(f"  {row['name'][:42]:44} {marks}{flag}")
+    print()
+    for row in trend["scenarios"]:
+        if row["failures"]:
+            print(f"  {row['name']}: {row['runs']}회 중 {row['failures']}회 실패"
+                  f" (뒤집힘 {row['flips']}회)")
+    return 0
+
+
 def cmd_discover(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     engine = _resolve_engine(args, cfg)
@@ -723,6 +768,15 @@ def main(argv: list[str] | None = None) -> int:
     p_run.set_defaults(func=cmd_run)
     p_disc = sub.add_parser("discover", parents=[common], help="크롤링·인벤토리만 수행")
     p_disc.set_defaults(func=cmd_discover)
+
+    # 이력 조회는 대상 앱에 접속하지 않는다. 이미 쌓인 report.json만 읽으므로
+    # 브라우저 옵션(--headed 등)을 공유하지 않는다.
+    p_hist = sub.add_parser("history", help="최근 실행들의 시나리오별 추이 표")
+    p_hist.add_argument("-c", "--config", required=True, help="설정 YAML 경로")
+    p_hist.add_argument("--out", help="산출물 루트 디렉터리 (기본: 설정의 output_dir)")
+    p_hist.add_argument("--limit", type=int, default=20, help="볼 실행 수 (기본 20)")
+    p_hist.add_argument("--json", action="store_true", help="기계 판독용 JSON으로 출력")
+    p_hist.set_defaults(func=cmd_history)
 
     args = parser.parse_args(argv)
     try:
