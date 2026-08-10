@@ -128,7 +128,7 @@ def _is_secret_step(raw_value: str | None, selector: str | None) -> bool:
 
 STEP_ACTIONS = {
     "goto", "click", "fill", "select", "check", "press", "wait_for", "wait_ms",
-    "assert_visible", "assert_text", "assert_url",
+    "assert_visible", "assert_text", "assert_text_exact", "assert_url",
     "assert_not_visible", "assert_not_text",
     "extract",
     # 테스트용 메일함 같은 '앱 바깥 정답원'에서 값을 가져온다
@@ -137,6 +137,9 @@ STEP_ACTIONS = {
     "wait_popup", "close_popup",
     # 마우스·파일 조작
     "upload", "hover", "scroll_to", "drag",
+    # 한글 조합 입력 — fill은 값을 통째로 꽂아 조합 자체가 일어나지 않는다.
+    # 조합 중에 글자가 유실되는 결함은 이 액션으로만 재현된다.
+    "type_ime",
 }
 _NEEDS_SELECTOR = {"click", "fill", "select", "check", "press", "wait_for",
                    "assert_visible", "assert_text",
@@ -1033,6 +1036,24 @@ def load_config(path: str | Path) -> AgentConfig:
         trace=bool(r.get("trace", True)),
         mask_selectors=[str(x) for x in r.get("mask_selectors", [])],
     )
+
+    # 조합 입력은 Chromium의 IME 경로를 직접 두드린다(CDP). 다른 엔진에서는
+    # 재현할 수 없으므로, 돌려 놓고 중간에 실패하게 두지 않고 시작 전에 막는다.
+    # 조합을 재현하지 못한 실행에 합격·불합격을 매기면 안 되기 때문이다.
+    if target.browser != "chromium":
+        for group, label in ((checks, "data_checks"), (specs, "spec_checks"),
+                             (writes, "write_checks")):
+            for spec in group:
+                if any(s.action == "type_ime" for s in spec.steps):
+                    raise ConfigError(
+                        f"{label} '{spec.name}': type_ime는 chromium에서만 동작합니다 "
+                        f"(현재 target.browser={target.browser}). 조합 입력을 재현할 수 "
+                        "없는 엔진에서 이 검사를 통과로 세지 않기 위해 실행 전에 막습니다."
+                    )
+        if auth and any(s.action == "type_ime" for s in auth.steps):
+            raise ConfigError(
+                f"auth: type_ime는 chromium에서만 동작합니다 "
+                f"(현재 target.browser={target.browser})")
 
     return AgentConfig(
         target=target,

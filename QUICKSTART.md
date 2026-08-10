@@ -134,6 +134,18 @@ spec_checks:
       - {action: click, selector: "#apply"}
 ```
 
+**한글 입력** — `fill`은 값을 통째로 꽂아 조합 자체가 일어나지 않는다. 조합 중에
+글자가 유실되는 결함은 `type_ime`로만 재현된다. (Chromium 전용 — 다른 엔진에서는
+실행 전에 막는다. 재현 못 한 검사를 통과로 세지 않기 위해서다.)
+
+```yaml
+- {action: type_ime, selector: "#editor", value: "한글날"}
+- {action: assert_text_exact, selector: "#saved", value: "한글날"}
+```
+
+`assert_text`는 부분 일치라 `한글날`이 `한한글한글날` 안에 있어도 통과한다.
+값이 정확히 무엇인지 봐야 하면 `assert_text_exact`를 쓴다.
+
 **2단계 인증(6자리 코드)** — 코드는 30초마다 바뀌므로 입력하기 직전에 만들어진다.
 비밀키는 환경변수로만 받고 리포트에는 `***`로 남는다.
 

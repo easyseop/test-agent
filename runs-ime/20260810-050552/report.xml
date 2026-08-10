@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="웹 자동 테스트 리포트" tests="1" failures="1" errors="0" skipped="0" time="1.321">
+  <testcase name="한글입력-조합방식" classname="webtest_agent.명세 검증" time="0.857">
+    <failure message="스텝 2 실패 — &#x27;#saved&#x27; 요소의 텍스트가 정확히 &#x27;한글날&#x27;인지 확인한다: 텍스트가 정확히 일치하지 않습니다. 기대 &#x27;한글날&#x27; / 실제 &#x27;한한글한글날&#x27;">스텝 2 실패 — &#x27;#saved&#x27; 요소의 텍스트가 정확히 &#x27;한글날&#x27;인지 확인한다: 텍스트가 정확히 일치하지 않습니다. 기대 &#x27;한글날&#x27; / 실제 &#x27;한한글한글날&#x27;</failure>
+  </testcase>
+</testsuite>

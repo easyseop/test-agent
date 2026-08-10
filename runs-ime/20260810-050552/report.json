@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "title": "웹 자동 테스트 리포트",
+    "base_url": "http://127.0.0.1:5099",
+    "app_version": "",
+    "config_path": "/tmp/claude-0/-home-user/f955d4d0-5e37-5178-b123-cdc36c3e79ca/scratchpad/ime/ime.yaml",
+    "started_at": "2026-08-10 05:05:52",
+    "finished_at": "2026-08-10 05:05:54",
+    "duration_ms": 1321,
+    "browser": "chromium",
+    "browser_version": "141.0.7390.37",
+    "playwright_version": "1.56.0",
+    "python_version": "3.11.15",
+    "agent_version": "0.1.0",
+    "status": "failed",
+    "error": "",
+    "write_reset": {
+      "performed": false,
+      "detail": "",
+      "skipped_reason": ""
+    }
+  },
+  "summary": {
+    "total": 1,
+    "pass": 0,
+    "warn": 0,
+    "fail": 1,
+    "flaky": 0
+  },
+  "sweep_coverage": {},
+  "diff": {
+    "prev_run": "20260810-050437",
+    "new_failures": [
+      "한글입력-조합방식"
+    ],
+    "fixed": [],
+    "still_failing": [],
+    "added": [],
+    "removed": []
+  },
+  "blocked_elements": [],
+  "scenarios": [
+    {
+      "name": "한글입력-조합방식",
+      "kind": "spec_check",
+      "page": "/",
+      "description": "에디터에 '한글날'을 입력하면 그대로 남아야 한다",
+      "status": "fail",
+      "reasons": [
+        "스텝 2 실패 — '#saved' 요소의 텍스트가 정확히 '한글날'인지 확인한다: 텍스트가 정확히 일치하지 않습니다. 기대 '한글날' / 실제 '한한글한글날'"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "goto",
+          "description": "/ 페이지에 접속한다",
+          "selector": null,
+          "value": null,
+          "status": "ok",
+          "error": "",
+          "screenshot": "screenshots/01_한글입력-조합방식/step00.jpg",
+          "duration_ms": 0
+        },
+        {
+          "index": 1,
+          "action": "type_ime",
+          "description": "'#editor'에 '한글날'를 한 글자씩 조합하며 입력한다",
+          "selector": "#editor",
+          "value": "한글날",
+          "status": "ok",
+          "error": "",
+          "screenshot": "screenshots/01_한글입력-조합방식/step01.jpg",
+          "duration_ms": 426
+        },
+        {
+          "index": 2,
+          "action": "assert_text_exact",
+          "description": "'#saved' 요소의 텍스트가 정확히 '한글날'인지 확인한다",
+          "selector": "#saved",
+          "value": "한글날",
+          "status": "fail",
+          "error": "텍스트가 정확히 일치하지 않습니다. 기대 '한글날' / 실제 '한한글한글날'",
+          "screenshot": "screenshots/01_한글입력-조합방식/step02_fail.jpg",
+          "duration_ms": 0
+        }
+      ],
+      "console_errors": [],
+      "ignored_console_errors": [],
+      "page_errors": [],
+      "http_failures": [],
+      "dialogs": [],
+      "downloads": [],
+      "effect": "",
+      "data_check": null,
+      "write_check": null,
+      "visual": null,
+      "responsive": null,
+      "perf": null,
+      "video": "",
+      "trace": "",
+      "flaky": false,
+      "duration_ms": 857
+    }
+  ],
+  "discovery_pages": []
+}

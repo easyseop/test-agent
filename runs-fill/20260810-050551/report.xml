@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="웹 자동 테스트 리포트" tests="1" failures="0" errors="0" skipped="0" time="1.548">
+  <testcase name="한글입력-fill방식" classname="webtest_agent.명세 검증" time="1.090">
+  </testcase>
+</testsuite>

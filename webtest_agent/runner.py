@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .browser import BrowserSession, save_screenshot
 from .config import MASK, AgentConfig, Step, substitute_vars, totp_refs
+from .hangul import composition_states
 from .datacheck import (compare, extract_table, parse_count, run_api_query,
                         run_query, run_scalar_query)
 from .models import (FAIL, PASS, WARN, DataCheckResult, PerfResult,
@@ -88,6 +89,7 @@ def _describe_action(step: Step, sel: str, val: str | None) -> str:
         "goto": f"{val} 페이지로 이동한다",
         "click": f"{sel} 요소를 클릭한다",
         "fill": f"{sel}에 '{val}'를 입력한다",
+        "type_ime": f"{sel}에 '{val}'를 한 글자씩 조합하며 입력한다",
         "select": f"{sel}에서 '{val}'를 선택한다",
         "check": f"{sel} 체크박스를 선택한다",
         "press": f"{sel}에서 {val} 키를 누른다",
@@ -95,6 +97,7 @@ def _describe_action(step: Step, sel: str, val: str | None) -> str:
         "wait_ms": f"{val}ms 동안 기다린다",
         "assert_visible": f"{sel} 요소가 화면에 보이는지 확인한다",
         "assert_text": f"{sel} 요소에 '{val}' 텍스트가 있는지 확인한다",
+        "assert_text_exact": f"{sel} 요소의 텍스트가 정확히 '{val}'인지 확인한다",
         "assert_url": f"주소(URL)가 '{val}' 패턴과 일치하는지 확인한다",
         "assert_not_visible": f"{sel} 요소가 화면에 보이지 않는지 확인한다",
         "assert_not_text": f"{sel} 요소에 '{val}' 텍스트가 없는지 확인한다",
@@ -713,6 +716,8 @@ class Runner:
                 pass
         elif action == "fill":
             locator.fill(value)
+        elif action == "type_ime":
+            self._exec_type_ime(page, locator, value)
         elif action == "select":
             locator.select_option(value)
         elif action == "check":
@@ -747,6 +752,13 @@ class Runner:
             if value not in actual:
                 raise AssertionError(
                     f"기대 텍스트 '{value}'가 없습니다 (실제: '{actual[:80]}')")
+        elif action == "assert_text_exact":
+            # assert_text는 부분 일치라 '한글날'이 '한한글한글날' 안에 있어도 통과한다.
+            # 값이 정확히 무엇인지 봐야 하는 검사(입력값 보존 등)에는 쓸 수 없다.
+            actual = locator.inner_text(timeout=3000).strip()
+            if actual != value:
+                raise AssertionError(
+                    f"텍스트가 정확히 일치하지 않습니다. 기대 '{value}' / 실제 '{actual[:80]}'")
         elif action == "assert_url":
             if not re.search(value, page.url):
                 raise AssertionError(f"URL이 패턴 '{value}'와 일치하지 않습니다 (실제: {page.url})")
@@ -766,6 +778,44 @@ class Runner:
             if value in actual:
                 raise AssertionError(
                     f"금지 텍스트 '{value}'가 존재합니다 (실제: '{actual[:80]}')")
+
+    def _exec_type_ime(self, page, locator, value: str) -> None:
+        """한글을 조합하며 입력한다 — 사람이 치는 것과 같은 중간 단계를 거친다.
+
+        fill()은 값을 통째로 꽂아 조합 이벤트를 만들지 않는다. 그래서 조합
+        중에 글자를 잃어버리는 결함(제어형 에디터가 조합을 끊는 흔한 버그)이
+        있어도 fill로는 항상 통과한다. 검증하지 않은 것을 통과시키는 셈이다.
+
+        브라우저의 IME 경로를 직접 두드리려면 CDP가 필요하다. CDP는 Chromium
+        전용이므로 다른 엔진에서는 통과시키지 않고 실행 불가로 끝낸다 — 조합을
+        재현하지 못한 실행을 통과로 세면 안 된다.
+        """
+        active = self._active_page(page)
+        locator.click()
+        try:
+            cdp = active.context.new_cdp_session(active)
+        except Exception as err:
+            # 설정을 읽는 시점에 이미 막히므로 여기까지 오면 안 된다. 그래도
+            # 조용히 넘기지는 않는다 — 조합을 재현하지 못한 실행을 통과로
+            # 세는 것이 이 액션을 만든 이유와 정면으로 어긋나기 때문이다.
+            raise RuntimeError(
+                "조합 입력을 시작하지 못했습니다 (Chromium 전용 기능). "
+                f"target.browser를 확인하세요: {_short(err)}"
+            ) from err
+        try:
+            for state in composition_states(value):
+                cdp.send("Input.imeSetComposition", {
+                    "text": state,
+                    "selectionStart": len(state),
+                    "selectionEnd": len(state),
+                })
+            # 확정. 조합을 끝내지 않으면 다음 동작이 조합 중인 상태에서 일어난다.
+            cdp.send("Input.insertText", {"text": value})
+        finally:
+            try:
+                cdp.detach()
+            except Exception:
+                pass
 
     def _exec_fetch(self, page, step: Step, url: str, record=None) -> None:
         """앱 바깥의 정답원에서 값을 가져와 변수에 담는다.
