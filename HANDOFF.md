@@ -3,9 +3,9 @@
 > **이 문서의 목적**: 대화 컨텍스트가 압축되거나 세션이 새로 시작돼도 작업을 끊김 없이
 > 이어가기 위한 단일 진입점. 새 세션은 **이 문서를 가장 먼저 읽는다.**
 >
-> 마지막 갱신: **2026-07-29**
+> 마지막 갱신: **2026-08-10**
 > 기준 저장소·브랜치: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq`
-> 유닛 테스트 **289개 통과** (커밋·브랜치는 훅이 매 턴 실측 주입 — 문서 값은 참고용)
+> 유닛 테스트 **516개 통과** (커밋·브랜치는 훅이 매 턴 실측 주입 — 문서 값은 참고용)
 
 ---
 
@@ -14,9 +14,10 @@
 ## 0. 핵심 (매 턴 자동 주입 구간)
 
 **현재 위치**: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq` ·
-유닛 테스트 289개 통과. 사용자 최종 목표(설명서→시나리오 생성→봇 실행→결과)는 **실증 완료**.
+유닛 테스트 516개 통과. 사용자 최종 목표(설명서→시나리오 생성→봇 실행→결과)는 **실증 완료**.
 
-**최근 완료**: 멀티 브라우저(3엔진 실측) · axe-core 정밀 접근성 점검(기본 `severity: info`).
+**최근 완료**: 실전 SPA(OpenMetadata) 검증에서 나온 보완 9건 + 설정 편의 3건
+(`inspect-api`·`discover` 표 추출·`check-config`). Lab 30/31, 기준선 대비 회귀 0(§4-E).
 **대기(사용자 결정)**: Console 결과 보존 정책.
 **범위 밖**: `knowledge/` 위키 — 사용자 본인의 일. 요청 전까지 손대지 않는다.
 
@@ -47,9 +48,9 @@
 ## 0-1. 세션 재개 절차
 
 ```bash
-cd /home/user/test-agent
+cd /workspace/test-agent
 git log --oneline -5 && git status --short     # 어디까지 왔는지
-python3 -m pytest tests/ -q                     # 289 passed 여야 정상
+python3 -m pytest tests/ -q                     # 516 passed 여야 정상
 ```
 
 읽는 순서: **이 문서 → `CLAUDE.md`(규약) → `docs/02-design.md` §5(판정 규칙)**.
@@ -61,9 +62,9 @@ python3 -m pytest tests/ -q                     # 289 passed 여야 정상
 
 | 저장소 | 역할 | 언어 | 브랜치 | 로컬 경로 |
 |---|---|---|---|---|
-| **test-agent** | **Runner(실행 엔진)**. 크롤링·UI 조작·UI↔API↔DB 대조·판정·증적·리포트 | Python + Playwright | `claude/web-app-test-agent-yyc2eq` | `/home/user/test-agent` |
-| **webtest-agent-lab** | **채점장**. 버그를 심은 테스트용 사이트 + **비공개 정답표**로 Runner의 탐지율 측정 | Node.js | `claude/review-fixes-2026-07-27` | `/workspace/webtest-agent-lab` |
-| **webtest-agent-site** | **운영 콘솔**. Runner의 `report.json`을 사람이 보는 화면으로 | Node.js | `claude/review-fixes-2026-07-27` | `/workspace/webtest-agent-site` |
+| **test-agent** | **Runner(실행 엔진)**. 크롤링·UI 조작·UI↔API↔DB 대조·판정·증적·리포트 | Python + Playwright | `claude/web-app-test-agent-yyc2eq` | `/workspace/test-agent` |
+| **webtest-agent-lab** | **채점장**. 버그를 심은 테스트용 사이트 + **비공개 정답표**로 Runner의 탐지율 측정 | Node.js | `main` | `/home/user/webtest-agent-lab` |
+| **webtest-agent-site** | **운영 콘솔**. Runner의 `report.json`을 사람이 보는 화면으로 | Node.js | `main` | `/home/user/webtest-agent-site` |
 
 한 줄 요약: **test-agent가 시험을 치고, lab이 채점하고, site가 성적표를 보여준다.**
 
@@ -189,6 +190,64 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
   화면에 띄운다. 그래서 **CSV 파일이 '`<title>` 없음·`lang` 없음'으로 잡혔다**(엔진별
   결과 불일치 1건 vs 3건). → 비-HTML 문서는 점검 대상에서 제외. 이후 3엔진 결과 일치.
 
+### 4-E. 실전 SPA 검증에서 나온 보완 (2026-08-09 ~ 08-10)
+
+실제 오픈소스 SPA(OpenMetadata 1.13.2)에 붙여 보고 드러난 것들이다. **여기서
+정한 원칙**: 그 앱에 맞춘 커스터마이징은 하지 않는다. 어느 웹앱에나 필요한
+일반 기능만 고치고, 안 되는 것은 안 된다고 보여준다.
+
+| 커밋 | 무엇 | 왜 |
+|---|---|---|
+| `4bfd7b1` | SPA에서 초록불을 막던 5가지 | 대상 앱 문제가 아니라 도구 문제였던 것들 |
+| `9b1e63b` | 무시한 콘솔 에러를 리포트에 남긴다 | 세지 않고 버리면 "에러 없음"으로 보인다 |
+| `6525384` | `type_ime` 한글 조합 입력 · `assert_text_exact` | `fill`은 조합 자체가 안 일어나 조합 중 유실 결함을 못 잡는다 |
+| `b068ed0` | `fetch`에 `expect_status` | "토큰 없이 부르면 401"처럼 오류 응답이 기대값인 검사 |
+| `4bdff67` | 대조한 행 수를 결과 옆에 표시 | 판정이 아니라 사실로. 1행 대조와 123행 대조가 같아 보이면 안 된다 |
+| `f0bd7b7` | 경쟁 분석이 지적한 코드 결함 3건 | 재현 후 수정 |
+| `d086b10` | 트레이스 자격증명 | 트레이스에 Authorization 헤더가 통째로 담긴다. 기본을 실패 시에만 남기도록 |
+| `85b3a0d` | 정답원 장애와 제품 결함을 종료코드에서 가른다 | 정답원이 죽으면 화면이 맞는지 알 수 없다. 제품 결함으로 보고하면 멀쩡한 코드를 뒤진다 |
+| `eed7369` | 실행 증거 지문 (`config_sha256`·`checks_sha256`) | 대조 열을 4→1로 줄여도 출력이 똑같다. 테스트가 조용히 약해지는 것을 잡는다 |
+
+**종료코드 규칙이 여기서 확정됐다.**
+
+```
+제품 결함 있음              → 1   (판정 불가가 섞여 있어도 결함을 가리지 않는다)
+결함 없고 판정 불가만 있음  → 2
+전부 판정했고 전부 통과     → 0
+```
+
+#### 4-E-2. 설정을 쓰는 수고를 줄인 3건 (2026-08-10)
+
+사람이 개입해야 하는 지점을 늘리지 않으면서 왕복을 줄이는 쪽. 전부 판정에는
+관여하지 않는다 — **선택지를 보여줄 뿐, 무엇을 대조할지는 사람이 정한다.**
+
+- **`inspect-api`** (`4afad8c`) — 정답원 REST 응답에서 `rows_path`·`columns`
+  초안을 뽑는다. `curl | jq`로 눈으로 훑던 부분이고, 화면이 아니라 응답을
+  읽어야 아는 것이라 `discover`로도 대신할 수 없었다. 행 배열 후보를 하나로
+  좁히지 않고 전부 보여준다.
+- **`discover`가 표를 뽑는다** (`8591602`) — `selector`·`headers`·`row_count`.
+  행 수를 같이 찍는 게 요점이다. 1행짜리 표를 대조해봐야 증명되는 게 거의
+  없는데, OpenMetadata 검증 때는 다 돌리고 리포트를 열어서야 알았다.
+  중첩 표의 행을 바깥에 더하지 않고(안 하면 1행이 4행으로 나온다), 숨은 표·
+  0행 표도 지우지 않고 표시만 한다. `role=grid` div 표도 찾는다.
+- **`check-config`** (`5dfe210`) — 돌리기 전에 못 찾은 셀렉터를 전부 모은다.
+  `run`은 첫 실패에서 접으므로 한 번에 하나씩만 드러났다. **'못 찾음'과
+  '확인 못 함'을 섞지 않는 것이 핵심** — 앞이 막힌 뒤의 결과는 틀렸다는 뜻도
+  맞다는 뜻도 아니다. `ui_table.columns`가 화면 헤더에 있는지도 같이 본다
+  (로케일이 바뀌면 헤더 글자가 통째로 달라진다).
+
+`check-config`도 스텝을 실제로 실행하므로 `run`과 같은 안전 기준을 쓴다 —
+`write_checks`는 실행하지 않고 건너뛴 사실을 출력에 남기며, 파괴적으로 보이는
+클릭은 `safety.find_destructive`로 막고 이후를 '확인 못 함'으로 표시한다.
+
+**검증**: 유닛 516개 통과. Lab 4개 시험장 실 Runner 전량 실행 —
+auth 11/12 · commerce 8/8 · grid 6/6 · checkout 5/5 = **30/31**, 기준선 대비
+탐지 회귀·신규 오탐·인프라 오류 **0**.
+
+> 표 추출은 파이썬이 아니라 페이지 안에서 도는 JS다. 파이썬만 테스트하면 JS
+> 오타가 나도 전부 통과하므로 `tests/test_discover_tables.py`는 실제 Chromium을
+> 띄워 직접 만든 HTML에 JS를 돌린다. 이 방식을 다른 JS에도 쓸 것.
+
 ### 4-D. 한 바퀴 실증 ⭐ (사용자 최종 목표)
 `d9c85c0`. **설명서 → 시나리오 자동 생성 → 봇 실행 → 결과**를 실제로 돌렸다.
 
@@ -224,18 +283,22 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
 | **Firefox 151** | ✅ **E2E 검증 완료** | `--browser firefox` 정상 18/18 · 버그모드 11/8 |
 | **WebKit 26.5** | ✅ **E2E 검증 완료** | `install-deps webkit`으로 시스템 라이브러리 ~20개 설치 후 성공 |
 | axe-core 4.12.1 | ✅ **저장소 동봉 완료** | `webtest_agent/vendor/` (560KB + 한국어 로케일 64KB). MPL-2.0 — 상업적 사용 무료 |
-| Docker | ❌ **차단** | 바이너리는 있으나 데몬 없음(`/var/run/docker.sock` 부재) |
+| Docker | ✅ **구동됨** (2026-08-10 정정) | 이전 기록의 "데몬 없음"은 오진이었다. `sudo dockerd`로 뜬다. §5의 "환경을 못 한다고 단정하지 말 것"이 **세 번째로** 재현된 사례 |
 
 ### ⚠️ 미푸시 커밋 경고 (컨테이너 휘발 시 소실)
 
+2026-08-10 실측 — **미푸시 없음.** lab·site 둘 다 `main`이고 `origin/main`과 같다.
+경로도 바뀌었다(`/workspace/…` → `/home/user/…`).
+
 ```
-/workspace/webtest-agent-lab   claude/review-fixes-2026-07-27  → origin/main 대비 2 커밋 미푸시
-/workspace/webtest-agent-site  claude/review-fixes-2026-07-27  → origin/main 대비 2 커밋 미푸시
+/home/user/webtest-agent-lab    main  → origin/main 과 동일
+/home/user/webtest-agent-site   main  → origin/main 과 동일
+/workspace/test-agent           claude/web-app-test-agent-yyc2eq
 ```
 
-이 세션의 GitHub 권한 범위는 `easyseop/test-agent` **한 곳뿐**이다. lab/site를 밀려면
-`add_repo`로 붙이고 **사용자 승인**을 받아야 한다. 새 세션은 이 두 저장소가 로컬에
-없을 수 있다(컨테이너 재생성 시 소실) — 그때는 GitHub `main` 기준으로 다시 시작한다.
+세션마다 GitHub 권한 범위가 다르다. 범위 밖 저장소를 밀려면 `add_repo`로 붙이고
+**사용자 승인**을 받는다. 컨테이너 재생성 시 로컬 사본이 사라질 수 있으니, 없으면
+GitHub `main` 기준으로 다시 시작한다.
 
 ---
 
@@ -250,13 +313,30 @@ Lab adapter와 Console은 시나리오 수가 아니라 **이 상태를 우선**
 SQL은 파라미터 바인딩만, if/else는 결정성 때문에 넣지 않음, CAPTCHA 우회는
 영구 범위 밖.
 
+### 다음 (2026-08-10 시점에서 이어갈 것)
+
+1. **Lab 채점 연결이 여전히 최우선.** §4-E의 능력 12건 중 Lab이 채점하는 것은
+   **하나도 없다**(`type_ime`만 `scripts/check_ime.py`라는 소형 시험장으로 자체
+   검증). 그래서 "이런 버그를 잡는다"를 정식으로 말할 수 없다. 시드 버그를
+   추가하려면 Lab `CLAUDE.md`대로 **네 계약을 함께** 건드려야 한다 —
+   `spec.json`(공개 기능) · `test-agent-cases.json`(공개 케이스) ·
+   `oracles.json`(비공개 정답) · `single/<bug-id>` 프로필. 새 버그는 현재
+   기준선을 무효화하므로 재측정까지 한 묶음이다.
+2. **미착수 — 정직성 항목 3건** (§4-E에서 갈라져 나온 것)
+   - 쓰기 검증의 사후조건 다중화(지금은 단일 수치 delta만 본다)
+   - 개인정보 마스킹 — 실제 데이터에 붙을 때만 의미가 있으므로 그때 한다
+   - `not_proven`을 리포트 표면까지 노출(모델·종료코드에는 이미 있다)
+3. **언어 독립 열 선택** (`column_testids` / `column_indexes`) — 지금은 열을
+   헤더 **글자**로 고른다. 로케일이 바뀌면 통째로 깨진다. `check-config`가
+   깨진 걸 알려주기는 하지만, 애초에 안 깨지게 하는 쪽이 낫다.
+
 ### 대기 (사용자 결정 필요)
 - **Console 결과 보존 정책** — 얼마나 오래, 어디에 저장할지는 사용자 정책 사항.
   (axe-core 도입 방식은 결정 완료 — 번들 동봉 + 기본 `severity: info`로 구현됨.)
 
-### 차단됨 (환경 한계 — 코드 문제 아님)
-- **Docker 격리 실행** — `docker` 바이너리는 있으나 데몬이 없다(`/var/run/docker.sock` 부재).
-  컨테이너 안에서 컨테이너를 띄우는 일이라 우회 불가. 웹 서버 기동과는 무관하다.
+### ~~차단됨~~ → 해제 (2026-08-10)
+- ~~**Docker 격리 실행**~~ — "데몬이 없어 불가"라고 적어 두었으나 **틀렸다**.
+  `sudo dockerd`로 정상 기동한다. 다음 세션은 시도부터 할 것.
 
 ### ✅ 해결됨 — '차단'이 아니라 오진이었던 것
 - **Lab 공식 기준선 재측정** (2026-07-29 완료). "하니스 아래 Chromium이 죽는다"는
@@ -264,9 +344,12 @@ SQL은 파라미터 바인딩만, if/else는 결정성 때문에 넣지 않음, 
   ② 어댑터가 환경변수를 화이트리스트로 잘라 `PLAYWRIGHT_BROWSERS_PATH` 미전달
   ③ 어댑터를 절대경로로 넘겨 **보안 경계에 정상 거부됨**(Runner가 Lab 경로를 알면
   비공개 정답표에 접근 가능 → `--stage-runner-file`로 스테이징해야 한다).
-  → **기준선: 탐지 7/8 = 87.5%, `infra_error` 0, 오탐 0** (Runner `7d0cf51`).
-  `f16fe28` 측정치와 동일 — 그 사이 개발이 탐지 능력을 떨어뜨리지 않았다.
-  재측정 명령 전문은 Lab `HANDOFF.md`에 있다.
+  → 당시 기준선: 탐지 7/8 (auth-lab 단독, Runner `7d0cf51`).
+
+  ⚠️ **"7/8 = 87.5%"를 지금 수치로 인용하지 말 것.** 시험장이 넷으로 늘었다.
+  2026-08-10 실측: auth 11/12 · commerce 8/8 · grid 6/6 · checkout 5/5 =
+  **30/31 (96.8%)**, `infra_error` 0, 오탐 0. 미탐은 `AUTH-B08` 하나뿐이고
+  기준선에서도 미탐이라 회귀가 아니다. 재측정 명령은 §8에 있다.
 
 ### 범위 밖
 - **LLM 위키(`knowledge/`) 구축** — 사용자 본인의 일. 요청 전까지 손대지 않는다.
@@ -276,13 +359,27 @@ SQL은 파라미터 바인딩만, if/else는 결정성 때문에 넣지 않음, 
 ## 8. 자주 쓰는 명령
 
 ```bash
-python3 -m pytest tests/ -q                              # 289 passed
+python3 -m pytest tests/ -q                              # 516 passed
 fuser -k 5057/tcp 2>/dev/null                            # 떠돌이 데모앱 정리 (실행 전 필수)
 ./scripts/run_demo.sh                                     # 정상 모드 — 전부 통과해야 정상
 ./scripts/run_demo.sh --bug                               # 버그 주입 — 검출 + 종료코드 1이 정상
 python3 -m webtest_agent run -c configs/demo-generated.yaml    # 설명서 기반 생성 시나리오
-python3 -m webtest_agent discover -c configs/demo.yaml         # 크롤링·인벤토리만
+python3 -m webtest_agent discover -c configs/demo.yaml         # 크롤링·인벤토리·표 목록
+python3 -m webtest_agent check-config -c configs/demo.yaml     # 돌리기 전 셀렉터 일괄 확인
+python3 -m webtest_agent inspect-api /api/orders -c configs/demo.yaml   # 정답원 응답 구조
 ```
+
+Lab 벤치마크(회귀 확인 — 기능을 바꿨으면 푸시 전에 돌린다):
+
+```bash
+cd /home/user/webtest-agent-lab && \
+  WEBTEST_AGENT_ROOT=/workspace/test-agent \
+  WEBTEST_AGENT_PYTHON=/workspace/test-agent/.venv/bin/python \
+  ./scripts/verify-local.sh --with-benchmark
+```
+
+`python3`에는 Playwright가 없다. Runner는 `.venv`를 쓰므로 위 두 환경변수가 필요하다.
+없으면 "선택한 Python 에 Playwright 가 없다"에서 멈춘다.
 
 산출물: `runs/<타임스탬프>/` — `report.html`(단일파일)·`report.json`·`report.xml`(JUnit)·
 `walkthrough.md`·`videos/`·`traces/`·`discovery.json`. **gitignore됨**(증적은 로컬 보관).
