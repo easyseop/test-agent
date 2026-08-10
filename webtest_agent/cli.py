@@ -615,6 +615,7 @@ def cmd_run(args: argparse.Namespace) -> int:
               "a11y_error": getattr(p, "a11y_error", "")}
              for p in discovery.pages],
             coverage=sweep_coverage,
+            mask_patterns=cfg.report.mask_patterns,
         )
         print("─" * 60)
         print(f"실행 불가: {infra_error}", file=sys.stderr)
@@ -659,7 +660,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                             [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y,
               "a11y_error": getattr(p, "a11y_error", "")}
                              for p in discovery.pages],
-                            diff=diff, coverage=sweep_coverage)
+                            diff=diff, coverage=sweep_coverage,
+                            mask_patterns=cfg.report.mask_patterns)
 
     print("─" * 60)
     print(f"실행 완료: 통과 {summary['pass']} · 경고 {summary['warn']} · 실패 {summary['fail']}"

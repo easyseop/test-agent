@@ -10,13 +10,15 @@ from dataclasses import replace
 from pathlib import Path
 
 from .browser import BrowserSession, save_screenshot
-from .config import MASK, AgentConfig, Step, substitute_vars, totp_refs
+from .config import (MASK, AgentConfig, Step, post_conditions, substitute_vars,
+                     totp_refs)
 from .hangul import composition_states
 from .datacheck import (compare, extract_table, parse_count, run_api_query,
                         run_query, run_scalar_query)
 from .models import (FAIL, PASS, WARN, DataCheckResult, PerfResult,
                      ResponsiveResult, ScenarioResult, StepResult,
-                     ViewportResult, VisualResult, WriteCheckResult)
+                     ViewportResult, VisualResult, WriteCheckResult,
+                     WriteConditionResult)
 from .safety import find_destructive, find_hard_block
 from .scenarios import Scenario, slugify
 from .totp import TotpError
@@ -539,11 +541,9 @@ class Runner:
             pre_url = page.url
             pre_dom = _dom_size(page)
 
-            write_pre: float | None = None
+            write_pre: list | None = None
             if scenario.kind == "write_check":
-                spec = scenario.write_spec
-                write_pre = run_scalar_query(spec.query.db, spec.query.sql,
-                                             self._query_params(spec.query))
+                write_pre = self._measure_post_conditions(scenario.write_spec)
 
             step_failed = False
             for i, step in enumerate(scenario.steps, start=1):
@@ -609,20 +609,7 @@ class Runner:
                 res.perf = self._perf_check(page, scenario)
 
             if scenario.kind == "write_check" and not step_failed and write_pre is not None:
-                spec = scenario.write_spec
-                try:
-                    post = run_scalar_query(spec.query.db, spec.query.sql,
-                                            self._query_params(spec.query))
-                    delta = post - write_pre
-                    res.write_check = WriteCheckResult(
-                        pre=write_pre, post=post, delta=delta,
-                        expected_delta=spec.expect_delta,
-                        matched=delta == spec.expect_delta,
-                    )
-                except Exception as err:
-                    res.write_check = WriteCheckResult(
-                        pre=write_pre, expected_delta=spec.expect_delta,
-                        note=f"사후 측정 실패: {_short(err)}")
+                res.write_check = self._write_verdict(scenario.write_spec, write_pre)
 
         except RunDeadlineExceeded:
             hard_fail = True
@@ -1133,6 +1120,53 @@ class Runner:
         result.matched = value <= spec.budget_ms
         return result
 
+    def _measure_post_conditions(self, spec) -> list:
+        """쓰기 전 값을 사후조건마다 잰다.
+
+        여기서 실패하면 예외가 그대로 올라가 시나리오가 실행 불가로 끝난다.
+        기준값을 못 잰 채 사후값만 보면 변화량을 알 수 없는데, 그걸 통과로
+        세면 검사하지 않은 것을 검사했다고 말하는 셈이다.
+        """
+        return [run_scalar_query(spec.query.db, cond.sql,
+                                 {name: self._resolve(raw)
+                                  for name, raw in (cond.params or {}).items()})
+                for cond in post_conditions(spec)]
+
+    def _write_verdict(self, spec, pre_values: list) -> WriteCheckResult:
+        """사후조건을 전부 다시 재고 하나라도 어긋나면 실패로 본다.
+
+        여러 개를 거는 이유가 하나만 봐서는 증명이 안 되기 때문이므로, 통과
+        기준을 '과반'이나 '첫 조건만'으로 낮추지 않는다. 측정 자체가 실패한
+        조건은 note를 남겨 판정 불가로 흘려보낸다 — 정답원을 못 읽은 것을
+        제품 결함으로 보고하면 멀쩡한 코드를 뒤지게 된다.
+        """
+        conditions: list[WriteConditionResult] = []
+        for cond, pre in zip(post_conditions(spec), pre_values):
+            row = WriteConditionResult(label=cond.label, pre=pre,
+                                       expected_delta=cond.expected_delta)
+            try:
+                row.post = run_scalar_query(
+                    spec.query.db, cond.sql,
+                    {name: self._resolve(raw)
+                     for name, raw in (cond.params or {}).items()})
+                row.delta = row.post - pre
+                row.matched = row.delta == cond.expected_delta
+            except Exception as err:
+                row.note = f"사후 측정 실패: {_short(err)}"
+            conditions.append(row)
+
+        broken = [c for c in conditions if c.note]
+        result = WriteCheckResult(
+            conditions=conditions,
+            matched=bool(conditions) and all(c.matched for c in conditions),
+            note=broken[0].note if broken else "",
+        )
+        if conditions:
+            first = conditions[0]
+            result.pre, result.post = first.pre, first.post
+            result.delta, result.expected_delta = first.delta, first.expected_delta
+        return result
+
     def _data_check(self, page, scenario: Scenario) -> DataCheckResult:
         spec = scenario.spec
         try:
@@ -1253,9 +1287,18 @@ class Runner:
                 res.reasons.append(f"쓰기 검증 불가: {wc.note}")
             elif not wc.matched:
                 wc_failed = True
-                res.reasons.append(
-                    f"상태 전이 불일치: 사전 {wc.pre:g} → 사후 {wc.post:g}"
-                    f" (변화 {wc.delta:+g}, 기대 {wc.expected_delta:+d})")
+                # 어긋난 조건을 **전부** 이름과 함께 적는다. 첫 하나만 적으면
+                # 나머지는 고치고 다시 돌려야 알게 되고, 조건이 몇 개였는지도
+                # 안 보인다.
+                broken = [c for c in wc.conditions if not c.matched and not c.note]
+                for c in broken:
+                    res.reasons.append(
+                        f"상태 전이 불일치[{c.label}]: 사전 {c.pre:g} → 사후 {c.post:g}"
+                        f" (변화 {c.delta:+g}, 기대 {c.expected_delta:+d})")
+                if not broken:
+                    res.reasons.append(
+                        f"상태 전이 불일치: 사전 {wc.pre:g} → 사후 {wc.post:g}"
+                        f" (변화 {wc.delta:+g}, 기대 {wc.expected_delta:+d})")
 
         step_failed = any(s.status == "fail" for s in res.steps)
 

@@ -44,7 +44,9 @@ class DataCheckResult:
 
 
 @dataclass
-class WriteCheckResult:
+class WriteConditionResult:
+    """사후조건 하나의 측정 결과."""
+    label: str = ""
     # binary float를 쓰면 큰 정수·금액 소수에서 변화량이 어긋나므로 Decimal로 다룬다.
     # JSON 출력에서는 문자열로 직렬화된다 (report._write_json의 default=str).
     pre: Decimal = Decimal(0)
@@ -53,6 +55,22 @@ class WriteCheckResult:
     expected_delta: int = 0
     matched: bool = False
     note: str = ""
+
+
+@dataclass
+class WriteCheckResult:
+    # 사후조건 전부의 결과. **이것이 사실이고**, 아래 스칼라는 표시용 요약이다.
+    conditions: list[WriteConditionResult] = field(default_factory=list)
+    # 하나라도 어긋나면 통과가 아니다. '과반'이나 '첫 조건만' 같은 완화는 없다 —
+    # 사후조건을 여러 개 거는 이유 자체가 하나만 봐서는 증명이 안 되기 때문이다.
+    matched: bool = False
+    note: str = ""
+    # 조건이 하나뿐이던 시절의 표시 필드. conditions[0]과 같은 값이며 조건이
+    # 여럿이면 첫 조건을 가리킨다. **판정은 여기가 아니라 conditions로 한다.**
+    pre: Decimal = Decimal(0)
+    post: Decimal = Decimal(0)
+    delta: Decimal = Decimal(0)
+    expected_delta: int = 0
 
 
 @dataclass

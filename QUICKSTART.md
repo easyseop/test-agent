@@ -151,6 +151,35 @@ query:
   params: {order_no: "{{order_no}}"}      # SQL 본문에 직접 넣지 않는다
 ```
 
+**저장·등록 검증** — 눌렀을 때 데이터가 실제로 어떻게 바뀌었는지 본다.
+사후조건은 **여러 개** 걸 수 있다.
+
+```yaml
+write_checks:
+  - name: 주문등록
+    page: /new
+    steps:
+      - {action: fill, selector: "#customer", value: 테스트고객}
+      - {action: click, selector: "#save"}
+    query:
+      db: sqlite:///staging.db        # 접속 정보만. 검사는 아래 expect가 갖는다
+    expect:
+      - {label: 주문,    sql: "SELECT COUNT(*) FROM orders", delta: 1}
+      - {label: 품목,    sql: "SELECT COUNT(*) FROM order_items", delta: 2}
+      - {label: 감사로그, sql: "SELECT COUNT(*) FROM audit_log", delta: 1}
+      - {label: 다른고객, sql: "SELECT COUNT(*) FROM orders WHERE customer <> '테스트고객'",
+         delta: 0}                    # 엉뚱한 데이터가 같이 늘지 않았는지
+```
+
+**건수 하나만 보는 검사는 통과해도 증명하는 게 거의 없다.** "주문이 1건
+늘었다"는 확인되지만 품목이 같이 저장됐는지, 감사 로그가 남았는지, 엉뚱한
+행이 같이 늘지 않았는지는 확인되지 않는다.
+
+하나라도 어긋나면 실패다. 어긋난 조건은 이름과 함께 **전부** 보고된다.
+조건을 지우면 `checks_sha256`이 달라지므로, 검사를 조용히 약하게 만들 수 없다.
+
+`expect_delta` 하나만 쓰던 예전 형태도 그대로 동작한다(둘을 같이 쓰면 오류).
+
 **결제창처럼 iframe·새 창으로 뜨는 화면**
 
 ```yaml
@@ -360,12 +389,28 @@ python -m webtest_agent history -c configs/우리사이트.yaml
   남긴 경우 비밀번호처럼 다루고 직접 지운다.
 - 실제 사이트의 캡처·영상에는 개인정보가 담길 수 있다. 공유 범위에 주의한다.
   가려야 할 칸은 `report.mask_selectors`로 스크린샷에서 마스킹한다.
+- **캡처만 가리는 것으로는 부족하다.** 실제 데이터를 대조하면 불일치 표본·
+  추출값·단언 메시지에 이름·전화번호가 리포트 본문에 그대로 남는다.
+  `report.mask_patterns`로 본문까지 가린다.
+
+  ```yaml
+  report:
+    mask_selectors: ["#customer-name"]        # 스크린샷
+    mask_patterns:                            # report.json·md·html·xml 본문
+      - "010-\\d{4}-\\d{4}"
+      - "[가-힣]{2,4}@[a-z.]+"
+  ```
+
+  판정이 끝난 뒤 리포트를 쓸 때만 적용되므로 **가려도 합격·불합격은 바뀌지
+  않는다.** 다만 패턴을 넓게 쓰면 일반 단어까지 가려져 리포트가 읽기 어려워진다
+  (`이[가-힣]{1,2}`는 '이미지'도 문다). 좁게 적는다.
 
 ## 막힐 때
 
 | 증상 | 대개 이것 |
 |---|---|
 | 종료코드 2, 시나리오 0개 | 대상 사이트가 안 떠 있다 |
+| 실패인데 제품 문제가 아니다 | `summary.not_proven`을 본다 — 판정 불가 건수다 |
 | 로그인이 안 된다 | `${환경변수}`가 안 들어갔다. 셸에서 `export`했는지 확인 |
 | 셀렉터를 못 찾는다 | `discovery.json`에서 실제 값을 다시 뽑는다 |
 | `rows_path`를 못 찾는다 | `inspect-api <경로>`로 응답 구조를 뽑는다 |

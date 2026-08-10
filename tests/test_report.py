@@ -43,7 +43,10 @@ def test_write_reports(tmp_path):
             "fixed": [], "still_failing": [], "added": [], "removed": []}
     summary = write_reports(tmp_path, meta, _sample_results(), [], [], diff=diff)
 
-    assert summary == {"total": 3, "pass": 1, "warn": 1, "fail": 1, "flaky": 0}
+    # not_proven은 fail의 부분집합이라 pass+warn+fail 합계를 흔들지 않는다.
+    assert summary == {"total": 3, "pass": 1, "warn": 1, "fail": 1,
+                       "not_proven": 0, "flaky": 0}
+    assert summary["pass"] + summary["warn"] + summary["fail"] == summary["total"]
     for name in ("report.json", "report.md", "report.html", "walkthrough.md"):
         assert (tmp_path / name).exists(), name
 

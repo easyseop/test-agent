@@ -371,10 +371,22 @@ class SpecCheckSpec:
 
 
 @dataclass
-class WriteCheckSpec:
-    """쓰기(상태 전이) 검증 — 스텝 실행 전후의 DB 스칼라 값 변화량을 검증한다.
+class PostCondition:
+    """쓰기 후 확인할 값 하나. sql은 단일 수치를 돌려줘야 한다."""
+    sql: str
+    expected_delta: int
+    params: dict[str, str] = field(default_factory=dict)
+    label: str = ""      # 리포트에서 어느 조건인지 알아보게 하는 이름
 
-    query.sql은 단일 수치를 반환해야 한다 (예: SELECT COUNT(*) FROM orders).
+
+@dataclass
+class WriteCheckSpec:
+    """쓰기(상태 전이) 검증 — 스텝 실행 전후의 DB 값 변화량을 검증한다.
+
+    사후조건은 **여러 개**를 걸 수 있다. 건수 하나만 보면 "주문이 1건 늘었다"는
+    확인되지만, 품목이 같이 저장됐는지·감사 로그가 남았는지·엉뚱한 표가 같이
+    늘지 않았는지는 확인되지 않는다. 그런 검사는 통과해도 증명하는 게 거의 없다.
+
     반드시 스테이징/시드 DB에서만 사용할 것.
     """
     name: str
@@ -382,7 +394,10 @@ class WriteCheckSpec:
     description: str = ""
     steps: list[Step] = field(default_factory=list)
     query: QuerySpec | None = None
+    # 하위호환 — 사후조건이 하나뿐일 때 쓰던 형태. 로딩 시 expect로 정규화되므로
+    # 실행·판정·리포트는 expect 하나만 본다(경로가 둘이면 한쪽만 고치는 사고가 난다).
     expect_delta: int = 0
+    expect: list[PostCondition] = field(default_factory=list)
 
 
 @dataclass
@@ -493,6 +508,24 @@ class AuthConfig:
     per_context: bool = False
 
 
+def _mask_patterns(raw) -> list[str]:
+    """리포트 본문 마스킹 패턴. 잘못된 정규식은 실행 도중이 아니라 여기서 잡는다."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ConfigError("report.mask_patterns: 목록이어야 합니다")
+    out: list[str] = []
+    for i, item in enumerate(raw):
+        text = str(item)
+        try:
+            re.compile(text)
+        except re.error as err:
+            raise ConfigError(
+                f"report.mask_patterns[{i}]: 정규식이 잘못됐습니다 ({err})") from err
+        out.append(text)
+    return out
+
+
 def _trace_mode(raw) -> str | bool:
     """trace: true | false | on-failure."""
     if isinstance(raw, bool):
@@ -524,6 +557,13 @@ class ReportConfig:
     video: bool = True
     trace: str = "on-failure"     # "on-failure" | true | false
     mask_selectors: list[str] = field(default_factory=list)  # 스크린샷에서 가릴 요소(개인정보 등)
+    # 리포트 **본문**에서 가릴 문자열 패턴(정규식). mask_selectors는 화면 캡처만
+    # 덮는다. 실제 데이터를 대조하면 불일치 표본·추출값·단언 메시지에 이름·전화번호
+    # 같은 값이 그대로 남는데, 캡처만 가리면 가려졌다고 착각하게 된다.
+    #
+    # 판정이 끝난 뒤 리포트를 쓰는 시점에만 적용한다. 대조 전에 가리면 서로 다른
+    # 값이 같은 ***로 바뀌어 불일치가 일치로 둔갑한다.
+    mask_patterns: list[str] = field(default_factory=list)
 
     @property
     def trace_enabled(self) -> bool:
@@ -633,8 +673,79 @@ def _validate_query_vars(query: QuerySpec | None, steps: list[Step], where: str)
                     "스텝에서 extract·fetch로 만들지 않았습니다")
 
 
-def _parse_query(q_raw, where: str, allow_api: bool) -> QuerySpec:
-    """query 파싱 — (db+sql) 또는 api 중 정확히 하나."""
+def _parse_post_conditions(raw_expect, query: QuerySpec, steps: list[Step],
+                           where: str) -> list[PostCondition]:
+    """사후조건 목록을 만든다. 형태가 하나든 여럿이든 여기서 하나로 모은다.
+
+    실행·판정·리포트가 보는 경로를 하나로 두기 위해서다. 경로가 둘이면 한쪽만
+    고치는 사고가 나고, 그 사고는 대개 '검사가 조용히 약해지는' 쪽으로 난다.
+    """
+    if raw_expect is None:
+        # 예전 형태: query.sql 하나 + expect_delta. 조건 1개짜리로 정규화한다.
+        return []
+    if not isinstance(raw_expect, list) or not raw_expect:
+        raise ConfigError(f"{where}.expect: 사후조건 목록이 필요합니다 (최소 1개)")
+    if query.sql:
+        raise ConfigError(
+            f"{where}: expect를 쓰면 query.sql을 두지 않습니다 "
+            "(어느 쪽이 검사인지 갈립니다). query에는 db만 남기세요")
+    extracted = {s.store_as for s in steps if s.store_as}
+    conditions: list[PostCondition] = []
+    for j, item in enumerate(raw_expect):
+        spot = f"{where}.expect[{j}]"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{spot}: 매핑이어야 합니다 (예: {{sql: ..., delta: 1}})")
+        sql = item.get("sql")
+        if not isinstance(sql, str) or not sql.strip():
+            raise ConfigError(f"{spot}: sql이 필요합니다")
+        if var_refs(sql):
+            raise ConfigError(
+                f"{spot}.sql: SQL 본문에는 {{{{변수}}}}를 쓸 수 없습니다. "
+                "params로 넘기고 SQL에서는 :이름 으로 받으세요 "
+                "(값을 문자열로 이어붙이면 주입 위험이 생깁니다)")
+        try:
+            validate_read_only_sql(sql)
+        except ValueError as err:
+            raise ConfigError(f"{spot}.sql: {err}") from err
+        if "delta" not in item:
+            raise ConfigError(f"{spot}: delta가 필요합니다 (예: 1, 변하지 않아야 하면 0)")
+        try:
+            delta = int(item["delta"])
+        except (TypeError, ValueError):
+            raise ConfigError(f"{spot}.delta: 정수여야 합니다") from None
+        params = {str(k): str(v) for k, v in (item.get("params") or {}).items()}
+        for name, rawval in params.items():
+            for ref in var_refs(rawval):
+                if ref not in extracted:
+                    raise ConfigError(
+                        f"{spot}.params.{name}: 변수 '{{{{{ref}}}}}'를 이 시나리오의 "
+                        "스텝에서 extract·fetch로 만들지 않았습니다")
+        conditions.append(PostCondition(
+            sql=sql, expected_delta=delta, params=params,
+            label=str(item.get("label", "") or f"조건 {j + 1}"),
+        ))
+    return conditions
+
+
+def post_conditions(spec: WriteCheckSpec) -> list[PostCondition]:
+    """이 쓰기 검증이 확인할 사후조건 전부. 예전 형태도 여기서 같은 모양이 된다."""
+    if spec.expect:
+        return spec.expect
+    return [PostCondition(
+        sql=spec.query.sql,
+        expected_delta=spec.expect_delta,
+        params=dict(spec.query.params or {}),
+        label="조건 1",
+    )]
+
+
+def _parse_query(q_raw, where: str, allow_api: bool,
+                 require_sql: bool = True) -> QuerySpec:
+    """query 파싱 — (db+sql) 또는 api 중 정확히 하나.
+
+    require_sql=False는 사후조건을 expect에 따로 적는 쓰기 검증 전용이다.
+    그때 query는 접속 정보(db)만 들고 있고 검사는 expect가 갖는다.
+    """
     if not q_raw:
         raise ConfigError(f"{where}: query가 필요합니다 (db+sql 또는 api)")
     has_db = bool(q_raw.get("db") or q_raw.get("sql"))
@@ -654,8 +765,13 @@ def _parse_query(q_raw, where: str, allow_api: bool) -> QuerySpec:
                      for k, v in (api_raw.get("headers") or {}).items()},
         )
         return QuerySpec(api=api, order_matters=bool(q_raw.get("order_matters", False)))
-    if not q_raw.get("db") or not q_raw.get("sql"):
+    if not q_raw.get("db"):
+        raise ConfigError(f"{where}: query.db가 필요합니다")
+    if require_sql and not q_raw.get("sql"):
         raise ConfigError(f"{where}: query.db와 query.sql이 필요합니다")
+    if not q_raw.get("sql"):
+        return QuerySpec(db=_expand_env(str(q_raw["db"]), f"{where}.query.db"),
+                         order_matters=bool(q_raw.get("order_matters", False)))
     sql = str(q_raw["sql"])
     if var_refs(sql):
         raise ConfigError(
@@ -906,17 +1022,25 @@ def load_config(path: str | Path) -> AgentConfig:
         w_steps = _parse_steps(raw.get("steps"), where)
         if not w_steps:
             raise ConfigError(f"{where}: steps가 최소 1개 필요합니다")
-        if "expect_delta" not in raw:
-            raise ConfigError(f"{where}: expect_delta가 필요합니다 (예: 1)")
-        w_query = _parse_query(raw.get("query"), where, allow_api=False)
+        raw_expect = raw.get("expect")
+        if raw_expect is not None and "expect_delta" in raw:
+            raise ConfigError(
+                f"{where}: expect와 expect_delta를 함께 쓸 수 없습니다 "
+                "(사후조건이 여러 개면 expect만 씁니다)")
+        if raw_expect is None and "expect_delta" not in raw:
+            raise ConfigError(f"{where}: expect 또는 expect_delta가 필요합니다 (예: 1)")
+        w_query = _parse_query(raw.get("query"), where, allow_api=False,
+                               require_sql=raw_expect is None)
         _validate_query_vars(w_query, w_steps, where)
+        w_expect = _parse_post_conditions(raw_expect, w_query, w_steps, where)
         writes.append(WriteCheckSpec(
             name=str(raw["name"]),
             page=str(raw.get("page", "/")),
             description=str(raw.get("description", "")),
             steps=w_steps,
             query=w_query,
-            expect_delta=int(raw["expect_delta"]),
+            expect_delta=int(raw["expect_delta"]) if "expect_delta" in raw else 0,
+            expect=w_expect,
         ))
 
     visuals: list[VisualCheckSpec] = []
@@ -1092,6 +1216,7 @@ def load_config(path: str | Path) -> AgentConfig:
         video=bool(r.get("video", True)),
         trace=_trace_mode(r.get("trace", "on-failure")),
         mask_selectors=[str(x) for x in r.get("mask_selectors", [])],
+        mask_patterns=_mask_patterns(r.get("mask_patterns")),
     )
 
     # 조합 입력은 Chromium의 IME 경로를 직접 두드린다(CDP). 다른 엔진에서는

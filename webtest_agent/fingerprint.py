@@ -70,6 +70,25 @@ def _query_digest(query) -> dict | None:
     }
 
 
+def _expect_digest(spec) -> list | None:
+    """쓰기 검증의 사후조건 전부.
+
+    이걸 빼면 조건을 하나 지워도 지문이 그대로다. 지문을 만든 이유가 바로
+    '검사가 조용히 약해지는 것'을 잡는 것이므로, 무엇을 몇 개 확인하는지는
+    반드시 들어가야 한다. 값(params)은 비밀일 수 있어 이름만 남긴다.
+    """
+    from .config import post_conditions, WriteCheckSpec
+
+    if not isinstance(spec, WriteCheckSpec):
+        return None
+    return [{
+        "label": cond.label,
+        "sql": cond.sql,
+        "expected_delta": cond.expected_delta,
+        "param_names": sorted(cond.params or {}),
+    } for cond in post_conditions(spec)]
+
+
 def _table_digest(table) -> dict | None:
     if table is None:
         return None
@@ -95,6 +114,7 @@ def checks_sha256(cfg) -> str:
                 "ui_table": _table_digest(getattr(spec, "ui_table", None)),
                 "query": _query_digest(getattr(spec, "query", None)),
                 "expect_delta": getattr(spec, "expect_delta", None),
+                "expect": _expect_digest(spec),
                 "threshold": getattr(spec, "threshold", None),
                 "viewports": list(getattr(spec, "viewports", []) or []),
                 "budget_ms": getattr(spec, "budget_ms", None),

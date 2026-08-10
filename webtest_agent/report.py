@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import base64
+import copy
 import html as html_mod
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 
+from .config import MASK
 from .models import FAIL, PASS, WARN, BlockedElement, RunMeta, ScenarioResult
 
 # report.json 계약 버전. Runner·Lab 어댑터·Console이 함께 읽으므로, 구조를
@@ -45,12 +48,75 @@ def _engine_label(meta) -> str:
     return f"{_ENGINE_LABEL.get(engine, engine)} {meta.browser_version}".strip()
 
 
+def mask_report_text(results: list[ScenarioResult],
+                     patterns: list[str]) -> list[ScenarioResult]:
+    """리포트 본문에 남는 값을 가린다. **판정이 끝난 뒤에만** 부른다.
+
+    `mask_selectors`는 화면 캡처만 덮는다. 실제 데이터를 대조하면 불일치 표본·
+    추출값·단언 메시지에 이름·전화번호 같은 값이 그대로 남는데, 캡처만 가리고
+    공유하면 가려졌다고 착각하게 된다.
+
+    대조 **전에** 가리면 서로 다른 값이 같은 ***로 바뀌어 불일치가 일치로
+    둔갑한다. 그래서 원본은 건드리지 않고 사본에만 적용한다.
+
+    시나리오 이름과 셀렉터는 가리지 않는다 — 이름은 이력 비교와 채점의 키이고,
+    셀렉터는 값이 아니라 구조라서 가리면 무엇이 깨졌는지 알 수 없게 된다.
+    """
+    if not patterns:
+        return results
+    rx = re.compile("|".join(f"(?:{p})" for p in patterns))
+
+    def scrub(text):
+        return rx.sub(MASK, text) if isinstance(text, str) and text else text
+
+    masked = copy.deepcopy(results)
+    for r in masked:
+        r.reasons = [scrub(x) for x in r.reasons]
+        r.console_errors = [scrub(x) for x in r.console_errors]
+        r.ignored_console_errors = [scrub(x) for x in r.ignored_console_errors]
+        r.page_errors = [scrub(x) for x in r.page_errors]
+        r.dialogs = [scrub(x) for x in r.dialogs]
+        r.effect = scrub(r.effect)
+        r.not_proven_reason = scrub(r.not_proven_reason)
+        for st in r.steps:
+            st.value = scrub(st.value)
+            st.error = scrub(st.error)
+            st.description = scrub(st.description)
+        dc = r.data_check
+        if dc is not None:
+            dc.note = scrub(dc.note)
+            dc.missing_in_ui = [[scrub(c) for c in row] for row in dc.missing_in_ui]
+            dc.unexpected_in_ui = [[scrub(c) for c in row] for row in dc.unexpected_in_ui]
+        wc = r.write_check
+        if wc is not None:
+            wc.note = scrub(wc.note)
+            for c in wc.conditions:
+                c.note = scrub(c.note)
+    return masked
+
+
+def unproven(results: list[ScenarioResult]) -> list[ScenarioResult]:
+    """실패로 셌지만 사유가 '제품이 기대와 다름'이 아니라 '판정할 수 없었음'인 것.
+
+    **실패한 것 중에서만** 센다. 통과한 시나리오에 이 표시가 붙어 있어도 세지
+    않는다 — 그러면 부분집합이 아니게 되어 읽는 쪽이 `fail`보다 큰 판정 불가
+    건수를 보게 된다.
+    """
+    return [r for r in results
+            if r.status == FAIL and getattr(r, "not_proven", False)]
+
+
 def summarize(results: list[ScenarioResult]) -> dict:
     return {
         "total": len(results),
         "pass": sum(1 for r in results if r.status == PASS),
         "warn": sum(1 for r in results if r.status == WARN),
         "fail": sum(1 for r in results if r.status == FAIL),
+        # 실패 중 '판정 불가'가 몇 건인가. **별도 칸이 아니라 fail의 부분집합**이다.
+        # 따로 빼면 pass+warn+fail이 전체와 어긋나 리포트를 읽는 쪽 계약이 깨지고,
+        # 무엇보다 '통과가 아님'이 흐려진다. 정답원이 죽어 판정하지 못한 것을
+        # 제품 결함과 같은 칸에만 두면 멀쩡한 코드를 뒤지게 된다.
+        "not_proven": len(unproven(results)),
         # 재실행에서 통과해 경고로 낮춘 실패 — 통과로 간주하지 않는다
         "flaky": sum(1 for r in results if r.flaky),
     }
@@ -64,8 +130,14 @@ def write_reports(
     discovery_pages: list[dict],
     diff: dict | None = None,
     coverage: dict | None = None,
+    mask_patterns: list[str] | None = None,
 ) -> dict:
+    # 집계는 원본으로 낸다 — 가린 문자열이 건수를 흔들면 안 된다.
     summary = summarize(results)
+    # 가리기는 판정이 끝난 **이 지점 한 곳**에서만 한다. 여기서 하면 JSON·
+    # Markdown·HTML·JUnit이 전부 같은 내용을 쓰게 된다. 한 파일만 가리면
+    # 가려졌다고 착각하고 다른 파일을 공유하게 된다.
+    results = mask_report_text(results, mask_patterns or [])
     _write_json(run_dir / "report.json", meta, summary, results, blocked, discovery_pages,
                 diff, coverage)
     _write_markdown(run_dir / "report.md", meta, summary, results, blocked, diff, coverage)
@@ -78,7 +150,11 @@ def write_reports(
 def _junit_xml(meta: RunMeta, summary: dict, results: list[ScenarioResult]) -> str:
     """JUnit XML — CI 시스템이 테스트별 결과를 표시하는 표준 포맷.
 
-    시나리오=testcase. 실패→<failure>. 실행 불가(infra_error)는 전체를 <error>로.
+    시나리오=testcase. JUnit은 두 가지를 구분한다 — `<failure>`는 '돌렸는데
+    기대와 달랐다', `<error>`는 '돌리지 못했다'. 우리 계약과 정확히 맞으므로
+    제품 결함은 failure, 판정 불가는 error로 낸다. 둘을 한 칸에 몰면 CI 화면에서
+    정답원 장애가 제품 결함으로 보인다.
+
     경고는 통과로 두되 사유를 <system-out>에 남긴다(종료코드가 경고를 실패로
     치지 않는 것과 일관).
     """
@@ -89,7 +165,11 @@ def _junit_xml(meta: RunMeta, summary: dict, results: list[ScenarioResult]) -> s
     suite_name = esc(meta.title or "webtest-agent")
     time_s = f"{meta.duration_ms / 1000:.3f}"
 
-    if meta.status == "infra_error":
+    unjudged = {id(r) for r in unproven(results)}
+    # 실행이 통째로 무너진 경우(브라우저 사망·대상 미기동)에는 시나리오별 결과를
+    # 내지 않는다. 중간까지의 통과를 늘어놓으면 실행이 끝난 것처럼 읽힌다.
+    # 판정 불가가 시나리오 단위로 설명되는 경우(정답원 장애)에만 상세를 낸다.
+    if meta.status == "infra_error" and not unjudged:
         # 판정 불가 — 개별 테스트가 아니라 스위트 수준 오류로 표기한다.
         lines.append(
             f'<testsuite name="{suite_name}" tests="1" failures="0" errors="1" '
@@ -100,17 +180,22 @@ def _junit_xml(meta: RunMeta, summary: dict, results: list[ScenarioResult]) -> s
         lines.append('</testsuite>')
         return "\n".join(lines) + "\n"
 
-    failures = summary["fail"]
+    errors = len(unjudged)
+    failures = summary["fail"] - errors
     lines.append(
         f'<testsuite name="{suite_name}" tests="{summary["total"]}" '
-        f'failures="{failures}" errors="0" skipped="0" time="{time_s}">')
+        f'failures="{failures}" errors="{errors}" skipped="0" time="{time_s}">')
     for r in results:
         case_time = f"{r.duration_ms / 1000:.3f}"
         name = esc(r.name)
         kind = esc(KIND_LABEL.get(r.kind, r.kind))
         lines.append(
             f'  <testcase name="{name}" classname="webtest_agent.{kind}" time="{case_time}">')
-        if r.status == FAIL:
+        if id(r) in unjudged:
+            reason = esc(r.not_proven_reason or (r.reasons[0] if r.reasons else "판정 불가"))
+            body = esc("\n".join(r.reasons))
+            lines.append(f'    <error message="{reason}">{body}</error>')
+        elif r.status == FAIL:
             reason = esc(r.reasons[0] if r.reasons else "실패")
             body = esc("\n".join(r.reasons))
             lines.append(f'    <failure message="{reason}">{body}</failure>')
@@ -267,8 +352,17 @@ def _write_walkthrough(path, meta, results) -> None:
             outcome.append(f"화면 {dc.ui_count}건 vs DB {dc.db_count}건 → {mark}")
         wc = r.write_check
         if wc and not wc.note:
-            mark = "일치 ✅" if wc.matched else "불일치 ❌"
-            outcome.append(f"상태 전이 {wc.pre:g}→{wc.post:g} (기대 {wc.expected_delta:+d}) → {mark}")
+            # 조건을 **전부** 적는다. 첫 조건만 적으면 조건을 몇 개 확인했는지가
+            # 안 보여서, 조건을 지워 검사를 약하게 만들어도 리포트가 똑같아진다.
+            for c in (wc.conditions or []):
+                mark = "일치 ✅" if c.matched else "불일치 ❌"
+                outcome.append(
+                    f"상태 전이[{c.label}] {c.pre:g}→{c.post:g} "
+                    f"(기대 {c.expected_delta:+d}) → {mark}")
+            if not wc.conditions:
+                mark = "일치 ✅" if wc.matched else "불일치 ❌"
+                outcome.append(
+                    f"상태 전이 {wc.pre:g}→{wc.post:g} (기대 {wc.expected_delta:+d}) → {mark}")
         vis = r.visual
         if vis and not vis.baseline_created and not vis.baseline_updated and not vis.note:
             mark = "일치 ✅" if vis.matched else "불일치 ⚠️"
@@ -435,9 +529,17 @@ def _scenario_card(run_dir: Path, index: int, r: ScenarioResult) -> str:
 
     wc = r.write_check
     if wc is not None and not wc.note:
-        mark = "일치 ✅" if wc.matched else "<b style='color:#b91c1c'>불일치 ❌</b>"
-        parts.append(f"<p style='font-size:13.5px'>상태 전이: 사전 {wc.pre:g} → 사후 {wc.post:g}"
-                     f" (변화 {wc.delta:+g}, 기대 {wc.expected_delta:+d}) → {mark}</p>")
+        rows = wc.conditions or []
+        for c in rows:
+            mark = "일치 ✅" if c.matched else "<b style='color:#b91c1c'>불일치 ❌</b>"
+            parts.append(
+                f"<p style='font-size:13.5px'>상태 전이[{_esc(c.label)}]: "
+                f"사전 {c.pre:g} → 사후 {c.post:g}"
+                f" (변화 {c.delta:+g}, 기대 {c.expected_delta:+d}) → {mark}</p>")
+        if not rows:
+            mark = "일치 ✅" if wc.matched else "<b style='color:#b91c1c'>불일치 ❌</b>"
+            parts.append(f"<p style='font-size:13.5px'>상태 전이: 사전 {wc.pre:g} → 사후 {wc.post:g}"
+                         f" (변화 {wc.delta:+g}, 기대 {wc.expected_delta:+d}) → {mark}</p>")
 
     if r.steps:
         items = []
