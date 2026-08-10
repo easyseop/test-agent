@@ -142,11 +142,12 @@ STEP_ACTIONS = {
     "type_ime",
 }
 _NEEDS_SELECTOR = {"click", "fill", "select", "check", "press", "wait_for",
-                   "assert_visible", "assert_text",
+                   "assert_visible", "assert_text", "assert_text_exact",
                    "assert_not_visible", "assert_not_text",
                    "extract",
                    "upload", "hover", "scroll_to", "drag"}
-_NEEDS_VALUE = {"goto", "fill", "select", "press", "wait_ms", "assert_text", "assert_url",
+_NEEDS_VALUE = {"goto", "fill", "select", "press", "wait_ms",
+                "assert_text", "assert_text_exact", "assert_url",
                 "assert_not_text",
                 "upload", "drag", "fetch"}
 # 새 창 안에서는 프레임 지정이 의미가 없거나(창 전환 자체) 대상이 없다.

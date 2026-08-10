@@ -83,7 +83,8 @@ def test_describe_step_covers_every_action():
         kwargs = samples.get(action)
         if kwargs is None:
             kwargs = {"selector": "#a"}
-            if action in ("fill", "select", "press", "assert_text", "assert_not_text"):
+            if action in ("fill", "select", "press", "assert_text",
+                          "assert_text_exact", "assert_not_text", "type_ime"):
                 kwargs["value"] = "x"
         assert describe_step(_step(action=action, **kwargs))
 

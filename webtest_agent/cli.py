@@ -56,10 +56,23 @@ def _resolve_engine(args, cfg: AgentConfig) -> str:
 
 
 def _make_run_dir(cfg: AgentConfig, out: str | None) -> Path:
+    """실행마다 새 폴더. 이미 있으면 쓰지 않는다.
+
+    초 단위 이름에 exist_ok=True를 쓰면, 같은 초에 시작한 두 실행이 한 폴더를
+    공유해 서로의 리포트를 덮어쓴다. 나중에 끝난 쪽만 남고 앞선 실행은 증거가
+    사라지는데, 덮어쓴 사실조차 남지 않아 알아챌 방법이 없다.
+    """
     root = Path(out) if out else Path(cfg.output_dir)
-    run_dir = root / datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
-    return run_dir
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    for suffix in ("", *(f"-{n}" for n in range(1, 100))):
+        run_dir = root / f"{stamp}{suffix}"
+        try:
+            run_dir.mkdir(parents=True, exist_ok=False)
+            return run_dir
+        except FileExistsError:
+            continue
+    raise RunInfrastructureError(
+        f"실행 폴더를 만들지 못했습니다 — {root}/{stamp}* 가 이미 100개 있습니다")
 
 
 def _deadline_error(
@@ -609,7 +622,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     unresolved = any(r.status == FAIL or r.flaky for r in results)
     meta.status = "failed" if unresolved else "passed"
     diff = diff_for(run_dir.parent, run_dir, {r.name: r.status for r in results},
-                    identity=(cfg.target.base_url, cfg.config_path))
+                    identity=(cfg.target.base_url, cfg.config_path, meta.browser))
     summary = write_reports(run_dir, meta, results, blocked,
                             [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y,
               "a11y_error": getattr(p, "a11y_error", "")}
@@ -669,7 +682,8 @@ def cmd_history(args: argparse.Namespace) -> int:
     root = Path(args.out) if args.out else Path(cfg.output_dir)
     # run이 report.json에 남기는 키와 정확히 같아야 한다. 형태가 다르면
     # 같은 설정의 실행인데도 못 찾는다.
-    identity = (cfg.target.base_url, cfg.config_path)
+    # 엔진이 다르면 실패하는 검사도 다르므로 추이를 섞지 않는다.
+    identity = (cfg.target.base_url, cfg.config_path, _resolve_engine(args, cfg))
     trend = build_trend(root, identity=identity, limit=max(1, int(args.limit)))
 
     if args.json:

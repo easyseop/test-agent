@@ -137,7 +137,8 @@ def _write_run(root, name, base_url, config_path="configs/demo.yaml"):
     run = root / name
     run.mkdir(parents=True)
     (run / "report.json").write_text(
-        json.dumps({"meta": {"base_url": base_url, "config_path": config_path},
+        json.dumps({"meta": {"base_url": base_url, "config_path": config_path,
+                             "browser": "chromium"},
                     "scenarios": []}), encoding="utf-8")
     return run
 
@@ -149,10 +150,10 @@ def test_previous_run_must_be_same_target(tmp_path):
     current.mkdir()
 
     assert find_previous_run(
-        tmp_path, current, identity=("http://b.example", "configs/demo.yaml")) == other
+        tmp_path, current, identity=("http://b.example", "configs/demo.yaml", "chromium")) == other
     # 같은 대상의 실행이 없으면 비교하지 않는다 (다른 앱과 대조 금지)
     assert find_previous_run(
-        tmp_path, current, identity=("http://c.example", "configs/demo.yaml")) is None
+        tmp_path, current, identity=("http://c.example", "configs/demo.yaml", "chromium")) is None
 
 
 def test_previous_run_must_be_same_config(tmp_path):
@@ -161,7 +162,7 @@ def test_previous_run_must_be_same_config(tmp_path):
     current = tmp_path / "20260102-000000"
     current.mkdir()
     assert find_previous_run(
-        tmp_path, current, identity=("http://a.example", "configs/demo.yaml")) is None
+        tmp_path, current, identity=("http://a.example", "configs/demo.yaml", "chromium")) is None
 
 
 def test_previous_run_without_filter_keeps_legacy_behaviour(tmp_path):

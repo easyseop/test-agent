@@ -346,3 +346,42 @@ def test_run_level_total_counts_every_comparison():
     got = _compared_rows([_res(1, 1), _res(11, 11), _res(0, 0),
                           SimpleNamespace(data_check=None)])
     assert got == {"checks": 3, "ui": 12, "db": 12, "empty": 1}
+
+
+# ------------------------------- 설정 검증·실행 폴더·이력 identity (경쟁 분석 지적)
+
+def test_assert_text_exact_requires_selector_and_value(tmp_path):
+    """액션을 추가할 때 필수값 검증 집합에 넣지 않으면, 잘못된 YAML이
+    설정 단계를 통과해 실행 중에야 터진다. 실제로 그 상태로 커밋된 적이 있다."""
+    for step in ("{action: assert_text_exact}",
+                 "{action: assert_text_exact, selector: '#a'}",
+                 "{action: assert_text_exact, value: 'x'}"):
+        p = tmp_path / "x.yaml"
+        p.write_text(
+            "target:\n  base_url: http://x.test\n"
+            f"spec_checks:\n  - name: t\n    steps:\n      - {step}\n",
+            encoding="utf-8")
+        with pytest.raises(ConfigError):
+            load_config(str(p))
+
+
+def test_run_dir_never_reuses_an_existing_folder(tmp_path):
+    """같은 초에 시작한 두 실행이 한 폴더를 쓰면 앞선 실행의 증거가 사라진다."""
+    from webtest_agent.cli import _make_run_dir
+    cfg = SimpleNamespace(output_dir=str(tmp_path))
+    dirs = [_make_run_dir(cfg, None) for _ in range(3)]
+    assert len({str(d) for d in dirs}) == 3, "같은 폴더를 다시 내줬다"
+    assert all(d.exists() for d in dirs)
+
+
+def test_history_identity_separates_browsers(tmp_path):
+    """같은 설정을 다른 엔진으로 돌린 결과가 한 추이에 섞이면,
+    '어제는 통과했는데 오늘 깨졌다'가 실은 엔진 차이일 수 있다."""
+    import json
+    from webtest_agent.history import _identity_of
+    run = tmp_path / "20260101-000000"
+    run.mkdir()
+    (run / "report.json").write_text(json.dumps({
+        "meta": {"base_url": "http://x", "config_path": "c.yaml", "browser": "firefox"},
+        "scenarios": []}), encoding="utf-8")
+    assert _identity_of(run) == ("http://x", "c.yaml", "firefox")

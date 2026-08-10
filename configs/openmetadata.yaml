@@ -114,14 +114,20 @@ data_checks:
         headers:
           Authorization: "Bearer ${OM_JWT}"
 
-# 화면 C — 한글 IME 조합 입력은 지금 엔진으로 검증할 수 없다.
+# 화면 C — 한글 IME 조합 입력은 type_ime 액션으로 검증할 수 있다.
 #
-# fill()은 값을 직접 꽂고, press()는 키 한 번을 누른다. 둘 다
-# compositionstart~compositionend 이벤트를 만들지 않는다. 즉 "조합 중에 글자가
-# 유실되는가"라는 질문 자체를 재현할 수단이 없다.
+# fill()은 값을 통째로 꽂아 조합 자체가 일어나지 않으므로, 조합을 깨뜨리는
+# 결함이 있어도 항상 통과한다. type_ime는 Chromium의 IME 경로를 직접 써서
+# ㅎ → 하 → 한 순서의 중간 상태를 실제로 전달한다.
 #
-# 여기서 억지로 fill()을 써서 "통과"를 만들면 검증하지 않은 것을 검증했다고
-# 말하는 셈이라, 시나리오를 넣지 않고 비워 둔다. 필요한 기능은 별도 개발 항목이다.
+# 아직 시나리오를 넣지 않은 이유는 기능이 없어서가 아니라 SchemaEditor의
+# 경로와 CodeMirror 셀렉터를 받지 못해서다. 그 두 값이 오면 아래 형태로 넣는다.
+#
+#   - name: 한글IME-조합입력유지
+#     page: '<SchemaEditor 경로>'
+#     steps:
+#       - {action: type_ime, selector: '<CodeMirror 셀렉터>', value: '주문 조회'}
+#       - {action: assert_text_exact, selector: '<확인용 셀렉터>', value: '주문 조회'}
 
 report:
   title: OpenMetadata 1.13.2 (BANK 확장) 자동 검증

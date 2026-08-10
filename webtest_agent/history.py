@@ -7,7 +7,7 @@ from pathlib import Path
 from .models import FAIL
 
 
-def _identity_of(run_dir: Path) -> tuple[str, str] | None:
+def _identity_of(run_dir: Path) -> tuple[str, str, str] | None:
     """실행의 비교 가능 여부를 정하는 키 — (대상 URL, 설정 파일)."""
     try:
         payload = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
@@ -16,11 +16,15 @@ def _identity_of(run_dir: Path) -> tuple[str, str] | None:
     meta = payload.get("meta")
     if not isinstance(meta, dict):
         return None
-    return (str(meta.get("base_url", "")), str(meta.get("config_path", "")))
+    # 브라우저를 빼면 같은 설정을 Chromium·Firefox·WebKit으로 돌린 결과가
+    # 한 추이에 섞인다. 엔진이 다르면 실패하는 검사도 다르므로, "어제는 통과했는데
+    # 오늘 깨졌다"가 실은 "어제는 Chromium, 오늘은 Firefox"인 경우가 생긴다.
+    return (str(meta.get("base_url", "")), str(meta.get("config_path", "")),
+            str(meta.get("browser", "")))
 
 
 def find_previous_run(output_root: Path, current_run_dir: Path,
-                      identity: tuple[str, str] | None = None) -> Path | None:
+                      identity: tuple[str, str, str] | None = None) -> Path | None:
     """같은 산출물 루트에서 직전 실행 디렉터리를 찾는다 (report.json 존재 기준).
 
     여러 대상·설정이 같은 output_dir을 공유하면 서로 다른 앱·다른 시나리오 묶음의
@@ -64,7 +68,7 @@ def compute_diff(prev_run_id: str, prev: dict[str, str], cur: dict[str, str]) ->
 
 
 def diff_for(output_root: Path, current_run_dir: Path, cur_statuses: dict[str, str],
-             identity: tuple[str, str] | None = None) -> dict | None:
+             identity: tuple[str, str, str] | None = None) -> dict | None:
     prev_dir = find_previous_run(output_root, current_run_dir, identity=identity)
     if prev_dir is None:
         return None
@@ -74,7 +78,7 @@ def diff_for(output_root: Path, current_run_dir: Path, cur_statuses: dict[str, s
     return compute_diff(prev_dir.name, prev_statuses, cur_statuses)
 
 
-def collect_runs(output_root: Path, identity: tuple[str, str] | None = None,
+def collect_runs(output_root: Path, identity: tuple[str, str, str] | None = None,
                  limit: int = 20) -> list[Path]:
     """최근 실행 디렉터리들을 오래된 것부터 돌려준다.
 
@@ -107,7 +111,7 @@ def _run_summary(run_dir: Path) -> dict | None:
     }
 
 
-def build_trend(output_root: Path, identity: tuple[str, str] | None = None,
+def build_trend(output_root: Path, identity: tuple[str, str, str] | None = None,
                 limit: int = 20) -> dict:
     """시나리오 × 최근 실행 표를 만든다.
 
