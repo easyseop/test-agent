@@ -151,6 +151,34 @@ spec_checks:
 - {action: goto, value: "{{verify_link}}"}
 ```
 
+**실전 SPA에서 자주 걸리는 것들**
+
+```yaml
+target:
+  locale: en-US                    # 화면 표기 언어. 정답원이 영어 enum을 주면 맞춰둔다
+  ignore_console_patterns:         # 무해한 프레임워크 경고 (콘솔 에러 1건이면 실패이므로)
+    - "i18next::translator"
+
+auth:
+  per_context: true                # 시나리오마다 다시 로그인
+  steps: [...]
+```
+
+`per_context`는 로그인 세션이 `storage_state`로 안 옮겨지는 앱에 쓴다. 토큰을
+쿠키나 localStorage가 아니라 sessionStorage·메모리에 두는 SPA가 그렇다. 로그인은
+성공하는데 정작 검사할 화면마다 로그인 페이지로 튕기면 이걸 켠다. 매번 로그인해서
+느려지지만 정확하다.
+
+화면 표기와 정답원 표기가 다를 때는 값을 이어붙일 수 있다. 다만 **`locale`로 언어를
+맞출 수 있으면 그게 낫다** — 번역표를 우리가 떠안지 않게 된다.
+
+```yaml
+ui_table:
+  selector: "#tests"
+  columns: [대상, 상태]
+  value_map: {실패: Failed, 성공: Success}     # 화면 표기 → 정답원 표기
+```
+
 > **기대값은 설명서에서 가져온다.** 구현 코드의 WHERE절을 베끼면 구현 버그가
 > 기대값에 복제돼서 영원히 통과한다. 소스는 셀렉터·테이블명 확인용으로만 쓴다.
 

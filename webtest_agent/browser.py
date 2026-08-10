@@ -151,6 +151,8 @@ class BrowserSession:
         self.storage_state: Path | None = None
         self._storage_state_cleanup_path: Path | None = None
         self.preserve_storage_state = False
+        # target.locale로 덮어쓴다. 기본값은 기존 동작 유지.
+        self.locale = "ko-KR"
 
     def __enter__(self) -> "BrowserSession":
         self.start()
@@ -224,7 +226,10 @@ class BrowserSession:
             "viewport": VIEWPORT,
             "base_url": base_url,
             "accept_downloads": True,
-            "locale": "ko-KR",
+            # 로케일은 화면 표기 언어를 정한다. 하드코딩하면 기대 텍스트가
+            # 한국어에 묶이고, 영어 enum을 주는 API를 정답원으로 쓸 때
+            # 데이터가 같은데도 글자가 달라 불일치가 난다.
+            "locale": self.locale,
         }
         if self.storage_state is not None and self.storage_state.exists():
             kwargs["storage_state"] = str(self.storage_state)

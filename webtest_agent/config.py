@@ -255,6 +255,17 @@ class TargetConfig:
     browser: str = "chromium"    # chromium · firefox · webkit
     flaky_recheck: bool = False  # 실패 시 1회 재실행해 간헐(flaky) 여부 표시
     ignore_http_error_patterns: list[str] = field(default_factory=list)
+    # 브라우저 로케일. 화면 표기 언어를 정하므로 기대 텍스트와 반드시 같아야 한다.
+    # 정답원이 영어 enum(Failed/Success)을 주는 API라면 여기를 en-US로 두는 편이
+    # 값 매핑을 손으로 적는 것보다 정확하다 — 번역표를 우리가 관리하지 않게 된다.
+    locale: str = "ko-KR"
+    # 무시할 콘솔 에러 메시지 정규식.
+    #
+    # ignore_http_error_patterns는 발생 위치 URL로 거른다. 그런데 프레임워크가
+    # 뿜는 경고(i18next "key not found" 등)에는 위치 URL이 없어서 그 방식으로는
+    # 영원히 걸러지지 않는다. 콘솔 에러 1건이면 시나리오가 실패하므로, 무해한
+    # 잡음을 뿜는 앱은 화면이 멀쩡해도 통과할 수 없었다. 메시지 본문으로 거른다.
+    ignore_console_patterns: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -289,6 +300,8 @@ class UITableSpec:
     columns: list[str] | None = None
     count_selector: str | None = None
     pagination: PaginationSpec | None = None
+    # 화면 표기 → 정답원 표기 변환 (예: {"실패": "Failed"}). 상세는 compare() 참고.
+    value_map: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -441,8 +454,17 @@ class A11yConfig:
 
 @dataclass
 class AuthConfig:
-    """로그인 시나리오 — 실행 시작 시 1회 수행 후 세션(storage_state)을 전 시나리오가 재사용."""
+    """로그인 시나리오 — 실행 시작 시 1회 수행 후 세션(storage_state)을 전 시나리오가 재사용.
+
+    per_context=True면 시나리오마다 컨텍스트 안에서 로그인을 다시 수행한다.
+
+    storage_state는 쿠키와 localStorage만 담는다. 토큰을 sessionStorage나
+    메모리에만 두는 SPA는 이 방식으로 세션이 옮겨지지 않아, 로그인은 성공해도
+    정작 검사할 화면마다 미인증 상태가 된다(로그인 화면으로 튕김). 그런 앱에서는
+    매번 다시 로그인하는 편이 느리지만 정확하다.
+    """
     steps: list[Step] = field(default_factory=list)
+    per_context: bool = False
 
 
 @dataclass
@@ -732,9 +754,16 @@ def load_config(path: str | Path) -> AgentConfig:
             t.get("ignore_http_error_patterns"),
             "target.ignore_http_error_patterns",
         ),
+        locale=str(t.get("locale", "ko-KR")),
+        ignore_console_patterns=_regex_list(
+            t.get("ignore_console_patterns"),
+            "target.ignore_console_patterns",
+        ),
     )
     if target.run_timeout_ms <= 0:
         raise ConfigError("target.run_timeout_ms는 1ms 이상이어야 합니다")
+    if not target.locale.strip():
+        raise ConfigError("target.locale은 비워 둘 수 없습니다 (예: ko-KR, en-US)")
 
     c = _sub(data, "crawl")
     crawl = CrawlConfig(
@@ -778,6 +807,8 @@ def load_config(path: str | Path) -> AgentConfig:
             columns=[str(x) for x in columns] if columns else None,
             count_selector=str(ut_raw["count_selector"]) if ut_raw.get("count_selector") else None,
             pagination=pagination,
+            value_map={str(k): str(v)
+                       for k, v in (ut_raw.get("value_map") or {}).items()},
         )
 
         query = _parse_query(raw.get("query"), where, allow_api=True)
@@ -992,7 +1023,8 @@ def load_config(path: str | Path) -> AgentConfig:
         auth_steps = _parse_steps(a_raw.get("steps"), "auth")
         if not auth_steps:
             raise ConfigError("auth: steps가 최소 1개 필요합니다")
-        auth = AuthConfig(steps=auth_steps)
+        auth = AuthConfig(steps=auth_steps,
+                          per_context=bool(a_raw.get("per_context", False)))
 
     r = _sub(data, "report")
     report = ReportConfig(

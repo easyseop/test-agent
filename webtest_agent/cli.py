@@ -254,6 +254,7 @@ def _run_parallel(parallel, collected, cfg, run_dir, args, deadline, workers,
         if r is not None:
             return r
         session = BrowserSession(headless=not args.headed, engine=engine)
+        session.locale = cfg.target.locale
         session.start()
         if auth_state is not None:
             session.configure_storage_state(auth_state, preserve=True)
@@ -357,6 +358,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     # 종료코드 1(계약상 '유효한 실행 + 실패')로 오해되고 리포트도 남지 않는다.
     try:
       with BrowserSession(headless=not args.headed, engine=engine) as session:
+        session.locale = cfg.target.locale
         meta.browser = engine
         meta.browser_version = session.version
         allow_write_checks = bool(getattr(args, "allow_write_checks", False))
@@ -697,6 +699,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
     engine = _resolve_engine(args, cfg)
     run_dir = _make_run_dir(cfg, args.out)
     with BrowserSession(headless=not args.headed, engine=engine) as session:
+        session.locale = cfg.target.locale
         if cfg.auth:
             runner = Runner(session, cfg, run_dir)
             state_path = run_dir / "auth_state.json"

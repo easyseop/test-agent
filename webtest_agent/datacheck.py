@@ -177,8 +177,19 @@ JS_EXTRACT_TABLE = """(table) => {
     }
   }
   const rows = rowEls
+    // 접근성 트리에서 숨긴 행은 데이터가 아니다. antd 같은 UI 라이브러리는
+    // 열 너비를 재려고 aria-hidden 행을 하나 깔아 두는데, 이걸 세면 표의 행이
+    // 항상 하나씩 더 잡혀 건수 대조가 깨진다.
+    //
+    // 화면에 보이는지(offsetParent 등)로 거르지 않는 이유는, 표가 잠깐 숨은
+    // 순간에 전 행이 사라져 0건이 되고 정답원도 0건이면 조용히 통과해 버리기
+    // 때문이다. 숨김 여부는 wait_for가 볼 일이고, 여기서는 '데이터가 아니라고
+    // 표시된 행'만 뺀다.
+    .filter(tr => tr.getAttribute('aria-hidden') !== 'true')
     .map(tr => Array.from(tr.querySelectorAll('td,th')).map(c => clean(c.innerText)))
-    .filter(r => r.length > 0);
+    // 모든 칸이 빈 행도 데이터로 세지 않는다. 비교할 값이 하나도 없는 행은
+    // 대조에 기여하지 못하면서 건수만 어긋나게 만든다.
+    .filter(r => r.length > 0 && r.some(c => c !== ''));
   return { headers, rows };
 }"""
 
@@ -208,8 +219,18 @@ def compare(
     db_cols: list[str],
     db_rows: list[tuple],
     order_matters: bool = False,
+    value_map: dict[str, str] | None = None,
 ) -> DataCheckResult:
-    """정규화 후 UI 행과 DB 행을 비교한다. 기본은 순서 무시(멀티셋)."""
+    """정규화 후 UI 행과 DB 행을 비교한다. 기본은 순서 무시(멀티셋).
+
+    value_map은 화면 표기를 정답원 표기로 바꿔 준다. 화면이 상태를 번역해
+    보여주는데(실패) 정답원은 원값을 주는(Failed) 경우가 대표적이다. 정답원
+    쪽이 아니라 화면 쪽을 바꾸는 이유는 정답원이 기준이기 때문이다.
+
+    이 표를 늘려서 불일치를 덮으면 검증이 무의미해진다. 화면 언어를 정답원과
+    맞출 수 있으면(target.locale) 그쪽이 낫다 — 번역표를 우리가 관리하지 않게
+    되고, 앱이 번역을 고쳐도 설정이 따라 썩지 않는다.
+    """
     result = DataCheckResult()
 
     if columns:
@@ -239,7 +260,15 @@ def compare(
         )
         return result
 
-    ui_norm = [tuple(normalize_cell(row[i]) if i < len(row) else "" for i in indices) for row in ui_rows]
+    def _cell(row, i):
+        raw = row[i] if i < len(row) else ""
+        if value_map:
+            mapped = value_map.get(str(raw).strip())
+            if mapped is not None:
+                raw = mapped
+        return normalize_cell(raw)
+
+    ui_norm = [tuple(_cell(row, i) for i in indices) for row in ui_rows]
     db_norm = [tuple(normalize_cell(v) for v in row) for row in db_rows]
     result.ui_count, result.db_count = len(ui_norm), len(db_norm)
 

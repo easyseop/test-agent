@@ -356,18 +356,35 @@ class Runner:
         ]
 
     def _console_errors(self, monitor):
-        """콘솔 에러도 HTTP 실패와 같은 허용 목록으로 거른다.
+        """콘솔 에러를 두 가지 허용 목록으로 거른다.
 
-        리소스 로드 실패는 HTTP 실패와 콘솔 에러로 동시에 관측되므로, 한쪽만
-        제외하면 정상으로 합의한 응답이 다른 쪽에서 실패로 되살아난다.
+        하나는 발생 위치 URL이다. 리소스 로드 실패는 HTTP 실패와 콘솔 에러로
+        동시에 관측되므로, 한쪽만 제외하면 정상으로 합의한 응답이 다른 쪽에서
+        실패로 되살아난다.
+
+        다른 하나는 메시지 본문이다. 프레임워크가 뿜는 경고(i18next의
+        "key not found" 등)에는 발생 위치 URL이 없어 빈 문자열이 들어가므로,
+        URL 방식만으로는 어떤 패턴을 적어도 걸러지지 않는다. 콘솔 에러 1건이면
+        시나리오가 실패하는 규칙과 겹치면, 무해한 잡음을 뿜는 앱은 화면이
+        멀쩡해도 통과할 수 없다.
         """
-        patterns = self._ignore_patterns()
-        urls = getattr(monitor, "console_error_urls", [])
-        return [
-            text for index, text in enumerate(monitor.console_errors)
-            if not (index < len(urls) and urls[index]
-                    and any(p.search(urls[index]) for p in patterns))
+        url_patterns = self._ignore_patterns()
+        # 여러 테스트가 target을 가벼운 대역 객체로 만든다. 새 항목을 필수로 두면
+        # 그 테스트들이 기능과 무관하게 깨지므로 없을 때는 빈 목록으로 본다.
+        text_patterns = [
+            re.compile(p)
+            for p in getattr(self.cfg.target, "ignore_console_patterns", []) or []
         ]
+        urls = getattr(monitor, "console_error_urls", [])
+        kept = []
+        for index, text in enumerate(monitor.console_errors):
+            url = urls[index] if index < len(urls) else ""
+            if url and any(p.search(url) for p in url_patterns):
+                continue
+            if any(p.search(text or "") for p in text_patterns):
+                continue
+            kept.append(text)
+        return kept
 
     def _bounded_timeout(self, requested_ms: int) -> int:
         if self.deadline_monotonic is None:
@@ -400,6 +417,30 @@ class Runner:
             os.chmod(state_path, 0o600)
         finally:
             ctx.close()
+
+    def _reauth_if_needed(self, page, monitor=None) -> None:
+        """시나리오 컨텍스트 안에서 로그인을 다시 수행한다 (auth.per_context).
+
+        로그인 실패는 판정이 아니라 실행 불가다. 미인증 상태로 화면을 열면
+        로그인 페이지가 뜨고, 그건 "화면이 기대와 다르다"가 아니라 "검사를
+        시작하지 못했다"이기 때문이다. 여기서 예외를 그대로 올리면 시나리오가
+        인프라 오류로 처리된다.
+
+        로그인 과정에서 생긴 콘솔 잡음은 시나리오 판정에서 뺀다. 로그인 화면의
+        경고까지 검사 대상 화면의 결함으로 세면 안 된다.
+        """
+        auth = getattr(self.cfg, "auth", None)
+        if not (auth and getattr(auth, "per_context", False) and auth.steps):
+            return
+        for step in auth.steps:
+            page.set_default_timeout(self._bounded_timeout(5000))
+            self._exec_step(page, step)
+            self._wait(page, self.cfg.target.settle_ms)
+        if monitor is not None:
+            del monitor.console_errors[:]
+            del monitor.console_error_urls[:]
+            del monitor.page_errors[:]
+            del monitor.http_failures[:]
 
     def run(self, scenario: Scenario, index: int, suffix: str = "") -> ScenarioResult:
         res = ScenarioResult(
@@ -464,6 +505,8 @@ class Runner:
             ctx, page, monitor = self.session.new_context(
                 self.cfg.target.base_url, video_dir=video_tmp, trace=self.cfg.report.trace)
             page.set_default_timeout(self._bounded_timeout(5000))
+
+            self._reauth_if_needed(page, monitor)
 
             page.goto(scenario.page or "/", wait_until="load",
                       timeout=self._bounded_timeout(self.cfg.target.nav_timeout_ms))
@@ -1011,7 +1054,8 @@ class Runner:
             return DataCheckResult(note=f"정답원(DB/API) 조회 실패: {_short(err)}")
 
         result = compare(headers, rows, spec.ui_table.columns,
-                         db_cols, db_rows, spec.query.order_matters)
+                         db_cols, db_rows, spec.query.order_matters,
+                         value_map=spec.ui_table.value_map)
 
         if spec.ui_table.count_selector:
             el = page.query_selector(spec.ui_table.count_selector)
