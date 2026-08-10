@@ -95,6 +95,34 @@ data_checks:
       sql: "SELECT id, customer, status, amount FROM orders WHERE status='shipped'"
 ```
 
+DB에 못 붙으면 그 화면이 쓰는 REST 응답을 정답원으로 둔다. 화면이 백엔드 응답을
+제대로 그리는지까지는 이걸로 확인된다.
+
+```yaml
+    query:
+      api:
+        url: "/api/orders?status=shipped"
+        rows_path: orders                     # 응답에서 행 배열 위치 (점 표기)
+        columns: [id, customer, status, amount]
+        headers: {Authorization: "Bearer ${API_TOKEN}"}   # 필요할 때만
+```
+
+`rows_path`와 `columns`를 손으로 찾지 말고 응답에서 뽑는다.
+
+```bash
+python -m webtest_agent inspect-api /api/orders?status=shipped -c configs/우리사이트.yaml
+```
+
+응답을 걸어다니며 **행 배열 후보를 전부** 보여주고, 각 후보의 필드를 점 표기
+경로·타입·예시값으로 나열한 뒤 붙여넣을 초안까지 만든다. 어느 배열이 맞는지,
+어느 필드를 대조할지는 고르지 않는다 — 그건 사람이 정한다.
+
+토큰이 필요하면 `-H '이름:값'`으로 준다. 설정에 이미 `data_checks`의 API
+헤더가 있으면 그걸 그대로 쓴다. 401·403이 오면 그렇게 알려준다.
+
+`columns`는 화면 표의 열과 **같은 순서로** 맞춘다. 응답에 있는 필드를 다 적는
+게 아니라, 그 화면이 보여주기로 한 값만 적는다.
+
 **화면 값을 뽑아 다시 쓰기** — 주문번호처럼 실행할 때마다 달라지는 값.
 
 ```yaml
@@ -289,6 +317,7 @@ python -m webtest_agent history -c configs/우리사이트.yaml
 | 종료코드 2, 시나리오 0개 | 대상 사이트가 안 떠 있다 |
 | 로그인이 안 된다 | `${환경변수}`가 안 들어갔다. 셸에서 `export`했는지 확인 |
 | 셀렉터를 못 찾는다 | `discovery.json`에서 실제 값을 다시 뽑는다 |
+| `rows_path`를 못 찾는다 | `inspect-api <경로>`로 응답 구조를 뽑는다 |
 | 화면 글자가 기대와 다르다 | 로케일 문제. 브라우저가 보는 언어로 적는다 |
 | 정상인데 404가 실패로 잡힌다 | `target.ignore_http_error_patterns`에 URL 정규식 추가 |
 | 가끔 실패한다 | `wait_for`를 넣는다. 재시도는 기본으로 하지 않는다 |

@@ -13,6 +13,7 @@ from . import __version__
 from .browser import ENGINES, BrowserSession
 from .config import AgentConfig, ConfigError, load_config
 from .discovery import Discovery, crawl
+from .apishape import render as render_api_shape
 from .fingerprint import checks_sha256, file_sha256
 from .history import build_trend, diff_for
 from .models import FAIL, PASS, STATUS_LABEL, WARN, RunMeta
@@ -785,6 +786,68 @@ def _compared_rows(results) -> dict:
     return {"checks": checks, "ui": ui, "db": db, "empty": empty}
 
 
+def cmd_inspect_api(args: argparse.Namespace) -> int:
+    """정답원 응답을 읽어 설정 초안을 보여준다.
+
+    설정에서 가장 오래 걸리는 부분이 이것이다. 화면을 보고 아는 것이 아니라
+    응답을 뜯어야 알 수 있어서 discover로도 대신할 수 없었고, 사람이
+    `curl | jq`로 눈으로 훑어 rows_path와 점 표기 경로를 만들어야 했다.
+
+    판정에는 관여하지 않는다. 무엇을 대조할지는 사람이 정한다.
+    """
+    import urllib.error
+    import urllib.request
+
+    headers: dict[str, str] = {}
+    base_url = ""
+    if args.config:
+        cfg = load_config(args.config)
+        base_url = cfg.target.base_url
+        # 같은 설정 안에 이미 적어 둔 정답원 헤더가 있으면 그대로 쓴다.
+        for spec in cfg.data_checks:
+            api = spec.query.api if spec.query else None
+            if api and api.headers:
+                headers.update(api.headers)
+                break
+    for raw in args.header:
+        name, _, value = raw.partition(":")
+        if not value:
+            print(f"헤더 형식이 잘못됐습니다: {raw!r} (이름:값)", file=sys.stderr)
+            return 2
+        headers[name.strip()] = value.strip()
+
+    url = args.url
+    if "://" not in url:
+        if not base_url:
+            print("상대 경로를 쓰려면 -c로 설정 파일을 주세요 (base_url이 필요합니다)",
+                  file=sys.stderr)
+            return 2
+        url = base_url.rstrip("/") + url
+
+    try:
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=15) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as err:
+        print(f"{url} 가 HTTP {err.code}로 응답했습니다.", file=sys.stderr)
+        if err.code in (401, 403):
+            print("인증이 필요한 경로 같습니다. -H 'Authorization: Bearer ${토큰}' 을 "
+                  "셸에서 넣어 보세요.", file=sys.stderr)
+        return 2
+    except Exception as err:
+        print(f"{url} 를 불러오지 못했습니다: {_short_exc(err)}", file=sys.stderr)
+        return 2
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as err:
+        print(f"응답이 JSON이 아닙니다: {err}", file=sys.stderr)
+        return 2
+
+    print(render_api_shape(data, args.url))
+    return 0
+
+
 def cmd_discover(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     engine = _resolve_engine(args, cfg)
@@ -871,6 +934,18 @@ def main(argv: list[str] | None = None) -> int:
     p_hist.add_argument("--limit", type=int, default=20, help="볼 실행 수 (기본 20)")
     p_hist.add_argument("--json", action="store_true", help="기계 판독용 JSON으로 출력")
     p_hist.set_defaults(func=cmd_history)
+
+    # 정답원 API의 응답 구조만 본다. 브라우저를 띄우지 않으므로 브라우저
+    # 옵션을 공유하지 않는다.
+    p_api = sub.add_parser(
+        "inspect-api",
+        help="정답원 REST 응답에서 rows_path·columns 초안을 뽑는다")
+    p_api.add_argument("url", help="조회할 주소. 상대 경로면 -c의 base_url 기준")
+    p_api.add_argument("-c", "--config", help="설정 YAML (base_url·헤더를 가져옴)")
+    p_api.add_argument("-H", "--header", action="append", default=[],
+                       metavar="이름:값",
+                       help="추가 헤더. 토큰은 셸에서 ${환경변수}로 넣으세요")
+    p_api.set_defaults(func=cmd_inspect_api)
 
     args = parser.parse_args(argv)
     try:
