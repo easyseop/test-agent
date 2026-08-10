@@ -370,7 +370,14 @@ def _scenario_card(run_dir: Path, index: int, r: ScenarioResult) -> str:
         if dc.count_display is not None:
             ok = "일치" if dc.count_display_ok else "<b style='color:#b91c1c'>불일치</b>"
             count_note = f" · 건수 표기 {dc.count_display}건 ({ok})"
-        parts.append(f"<p style='font-size:13.5px'>UI {dc.ui_count}건 vs DB {dc.db_count}건 → {mark}{count_note}</p>")
+        # 0행 대 0행은 논리적으로 아무것도 증명하지 못한다. "일치"라고만 적으면
+        # 화면이 통째로 비어 있던 실행과 구별되지 않으므로 명시한다.
+        empty_note = ""
+        if dc.ui_count == 0 and dc.db_count == 0:
+            empty_note = ("<b style='color:#b45309'> — 양쪽 다 0행이라 "
+                          "비교한 값이 없습니다</b>")
+        parts.append(f"<p style='font-size:13.5px'>UI {dc.ui_count}건 vs DB {dc.db_count}건 "
+                     f"→ {mark}{count_note}{empty_note}</p>")
         parts.append(_diff_table(dc.columns, dc.missing_in_ui, "화면에 누락된 DB 행", dc.missing_total))
         parts.append(_diff_table(dc.columns, dc.unexpected_in_ui, "DB에 없는데 화면에 있는 행", dc.unexpected_total))
 

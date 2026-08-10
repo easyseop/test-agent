@@ -298,3 +298,51 @@ def test_expect_status_out_of_range_is_rejected(tmp_path):
     )
     with pytest.raises(ConfigError, match="상태코드"):
         load_config(str(p))
+
+
+# --------------------------------------------------- 대조한 행 수를 드러낸다
+
+def _res(ui, db):
+    from webtest_agent.models import DataCheckResult
+    dc = DataCheckResult()
+    dc.ui_count, dc.db_count = ui, db
+    return SimpleNamespace(data_check=dc)
+
+
+def test_rows_note_shows_the_number_not_a_judgement():
+    """몇 행인지만 말하고 '얇다·충분하다'를 판단하지 않는다.
+
+    임계값을 도구가 정하면 근거 없는 판단이 판정 옆에 붙는다. 숫자는 사실이므로
+    표시하되, 해석은 읽는 사람에게 넘긴다.
+    """
+    from webtest_agent.cli import _rows_note
+    assert _rows_note(_res(1, 1)) == " (대조 1행)"
+    assert _rows_note(_res(250, 250)) == " (대조 250행)"
+    # 어떤 행 수에도 경고 문구가 붙지 않는다
+    for n in (1, 2, 5, 100):
+        assert "얇" not in _rows_note(_res(n, n))
+        assert "⚠" not in _rows_note(_res(n, n))
+
+
+def test_zero_row_comparison_is_called_out():
+    """0행 대 0행은 '일치'지만 아무것도 증명하지 못한다.
+
+    이건 임계값이 아니라 논리 문제다 — 비교한 값이 하나도 없다.
+    실패로 만들지는 않는다. '0건 검색이면 표도 비어야 한다'처럼 0행이
+    정답인 검사가 실제로 있기 때문이다.
+    """
+    from webtest_agent.cli import _rows_note
+    assert _rows_note(_res(0, 0)) == " (양쪽 0행 — 비교한 값 없음)"
+
+
+def test_no_note_for_scenarios_without_a_data_check():
+    from webtest_agent.cli import _rows_note
+    assert _rows_note(SimpleNamespace(data_check=None)) == ""
+    assert _rows_note(SimpleNamespace()) == ""
+
+
+def test_run_level_total_counts_every_comparison():
+    from webtest_agent.cli import _compared_rows
+    got = _compared_rows([_res(1, 1), _res(11, 11), _res(0, 0),
+                          SimpleNamespace(data_check=None)])
+    assert got == {"checks": 3, "ui": 12, "db": 12, "empty": 1}

@@ -537,7 +537,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                     print(f"③ [{i}/{len(scenarios)}] {sc.name} ... ", end="", flush=True)
                     res = _run_scenario_with_flaky(runner, sc, i, cfg)
                     collected[i] = res
-                    print(STATUS_LABEL[res.status] + (" (flaky 의심)" if res.flaky else ""))
+                    print(STATUS_LABEL[res.status] + _rows_note(res)
+                          + (" (flaky 의심)" if res.flaky else ""))
 
             # 쓰기 검증은 승인된 것만, 항상 직렬로 마지막에 (동일 세션)
             for i, sc in serial:
@@ -551,7 +552,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 print(f"③ [{i}/{len(scenarios)}] {sc.name} ... ", end="", flush=True)
                 res = _run_scenario_with_flaky(runner, sc, i, cfg)
                 collected[i] = res
-                print(STATUS_LABEL[res.status] + (" (flaky 의심)" if res.flaky else ""))
+                print(STATUS_LABEL[res.status] + _rows_note(res)
+                      + (" (flaky 의심)" if res.flaky else ""))
 
             # 입력 순서로 정렬해 결정적 리포트 순서 보장
             results = order_results(collected)
@@ -617,6 +619,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     print("─" * 60)
     print(f"실행 완료: 통과 {summary['pass']} · 경고 {summary['warn']} · 실패 {summary['fail']}"
           f" (총 {summary['total']}, {meta.duration_ms / 1000:.1f}s)")
+    rows = _compared_rows(results)
+    if rows["checks"]:
+        print(f"데이터 대조: {rows['checks']}건 · 화면 {rows['ui']}행 / 정답원 {rows['db']}행"
+              + (f" · 양쪽 0행인 검사 {rows['empty']}건" if rows["empty"] else ""))
     if summary["flaky"]:
         print(f"간헐(flaky) 의심 {summary['flaky']}건 — 재실행에서 통과했으나 통과로 처리하지 않습니다")
     if sweep_coverage.get("found"):
@@ -692,6 +698,38 @@ def cmd_history(args: argparse.Namespace) -> int:
             print(f"  {row['name']}: {row['runs']}회 중 {row['failures']}회 실패"
                   f" (뒤집힘 {row['flips']}회)")
     return 0
+
+
+def _rows_note(res) -> str:
+    """대조한 행 수를 결과 옆에 붙인다.
+
+    몇 행을 봤는지는 사실이고, 그게 충분한지는 사람이 판단할 몫이다. 그래서
+    임계값을 두고 "표본이 얇다"고 경고하지 않는다 — 그 기준을 도구가 정하면
+    근거 없는 판단이 판정에 섞인다. 숫자만 보이게 두고 해석은 넘긴다.
+
+    이 표시가 없으면 요약만 읽은 사람이 "일치"를 전수 확인으로 오해한다.
+    """
+    dc = getattr(res, "data_check", None)
+    if dc is None:
+        return ""
+    if dc.ui_count == 0 and dc.db_count == 0:
+        return " (양쪽 0행 — 비교한 값 없음)"
+    return f" (대조 {dc.ui_count}행)"
+
+
+def _compared_rows(results) -> dict:
+    """실행 전체에서 대조한 행의 총량."""
+    checks = ui = db = empty = 0
+    for res in results:
+        dc = getattr(res, "data_check", None)
+        if dc is None:
+            continue
+        checks += 1
+        ui += dc.ui_count
+        db += dc.db_count
+        if dc.ui_count == 0 and dc.db_count == 0:
+            empty += 1
+    return {"checks": checks, "ui": ui, "db": db, "empty": empty}
 
 
 def cmd_discover(args: argparse.Namespace) -> int:
