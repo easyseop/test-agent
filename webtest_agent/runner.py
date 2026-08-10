@@ -102,7 +102,9 @@ def _describe_action(step: Step, sel: str, val: str | None) -> str:
         "assert_not_visible": f"{sel} 요소가 화면에 보이지 않는지 확인한다",
         "assert_not_text": f"{sel} 요소에 '{val}' 텍스트가 없는지 확인한다",
         "extract": f"{sel}의 값을 읽어 '{step.store_as}'에 담는다",
-        "fetch": f"{val} 를 불러와 '{step.store_as}'에 담는다",
+        "fetch": (f"{val} 를 불러와 상태코드가 {step.expect_status}인지 확인한다"
+                  if step.expect_status is not None and not step.store_as
+                  else f"{val} 를 불러와 '{step.store_as}'에 담는다"),
         "wait_popup": "새 창이 열릴 때까지 기다렸다가 그 창으로 옮긴다",
         "close_popup": "새 창을 닫고 원래 창으로 돌아온다",
         "upload": f"{sel}에 파일 '{val}'을 올린다",
@@ -836,7 +838,16 @@ class Runner:
             raise
         except Exception as err:
             raise AssertionError(f"{target} 를 불러오지 못했습니다: {_short(err)}") from err
-        if response.status >= 400:
+        # 오류 응답이 곧 기대값인 검사가 있다. 권한 없는 요청이 401을 돌려주는지
+        # 같은 것이다. expect_status가 있으면 그 코드와 정확히 맞는지만 본다.
+        if step.expect_status is not None:
+            if response.status != step.expect_status:
+                raise AssertionError(
+                    f"{target} 상태코드가 다릅니다. "
+                    f"기대 {step.expect_status} / 실제 {response.status}")
+            if not step.store_as:
+                return
+        elif response.status >= 400:
             raise AssertionError(f"{target} 가 HTTP {response.status}로 응답했습니다")
 
         body = response.text()

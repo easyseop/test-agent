@@ -244,3 +244,57 @@ def test_missing_auth_attribute_is_tolerated():
     r = Runner.__new__(Runner)
     r.cfg = SimpleNamespace(target=SimpleNamespace(settle_ms=0))
     r._reauth_if_needed(_RecordingPage())
+
+
+# ------------------------------------------------- 오류 응답이 기대값인 검사
+
+def test_fetch_expect_status_allows_error_responses(tmp_path):
+    """권한 없는 요청이 401을 돌려주는지 — 오류 응답이 곧 기대값인 경우."""
+    p = tmp_path / "f.yaml"
+    p.write_text(
+        "target:\n  base_url: http://x.test\n"
+        "spec_checks:\n  - name: 권한없음-401\n    steps:\n"
+        "      - {action: fetch, value: /api/v1/secret, expect_status: 401}\n",
+        encoding="utf-8",
+    )
+    step = load_config(str(p)).spec_checks[0].steps[0]
+    assert step.expect_status == 401
+    # 상태코드만 볼 때는 본문을 담을 필요가 없다.
+    assert step.store_as is None
+
+
+def test_fetch_without_store_as_or_expect_status_is_rejected(tmp_path):
+    """아무것도 확인하지 않는 fetch는 통과시켜 봐야 의미가 없다."""
+    p = tmp_path / "g.yaml"
+    p.write_text(
+        "target:\n  base_url: http://x.test\n"
+        "spec_checks:\n  - name: 빈fetch\n    steps:\n"
+        "      - {action: fetch, value: /api/v1/x}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="store_as"):
+        load_config(str(p))
+
+
+def test_expect_status_rejected_on_other_actions(tmp_path):
+    p = tmp_path / "h.yaml"
+    p.write_text(
+        "target:\n  base_url: http://x.test\n"
+        "spec_checks:\n  - name: 잘못된사용\n    steps:\n"
+        "      - {action: click, selector: '#b', expect_status: 401}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="fetch"):
+        load_config(str(p))
+
+
+def test_expect_status_out_of_range_is_rejected(tmp_path):
+    p = tmp_path / "i.yaml"
+    p.write_text(
+        "target:\n  base_url: http://x.test\n"
+        "spec_checks:\n  - name: 범위밖\n    steps:\n"
+        "      - {action: fetch, value: /x, expect_status: 999}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="상태코드"):
+        load_config(str(p))

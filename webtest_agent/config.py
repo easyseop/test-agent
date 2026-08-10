@@ -168,6 +168,10 @@ class Step:
     # 테스트 메일함은 대개 JSON을 주는데, 그 안의 따옴표가 이스케이프돼 있어
     # 본문에 정규식을 바로 걸면 맞지 않는다.
     json_path: str | None = None
+    # fetch 전용 — 이 상태코드가 나와야 정상. 권한 검증("토큰 없이 부르면 401")처럼
+    # 오류 응답이 곧 기대값인 경우가 있다. 이게 없으면 400 이상은 전부 실패로
+    # 처리돼, 정상 동작을 확인하는 수단이 아예 없다.
+    expect_status: int | None = None
 
     @property
     def log_value(self) -> str | None:
@@ -192,13 +196,31 @@ class Step:
 
         store_as = d.get("store_as")
         pattern = d.get("pattern")
-        if action in ("extract", "fetch"):
-            if not store_as:
-                raise ConfigError(f"{where}: action '{action}'에는 store_as가 필요합니다")
-            store_as = str(store_as)
-            if not _VAR_NAME_RX.fullmatch(store_as):
+        expect_status = d.get("expect_status")
+        if expect_status is not None:
+            if action != "fetch":
+                raise ConfigError(f"{where}: expect_status는 fetch에서만 쓸 수 있습니다")
+            try:
+                expect_status = int(expect_status)
+            except (TypeError, ValueError):
                 raise ConfigError(
-                    f"{where}: store_as '{store_as}'는 영문자·숫자·밑줄만 쓸 수 있습니다")
+                    f"{where}.expect_status: 정수여야 합니다 (예: 401)") from None
+            if not 100 <= expect_status <= 599:
+                raise ConfigError(
+                    f"{where}.expect_status: HTTP 상태코드 범위(100~599)를 벗어났습니다")
+
+        if action in ("extract", "fetch"):
+            # 상태코드만 확인하는 fetch는 본문을 담을 필요가 없다.
+            if not store_as and not (action == "fetch" and expect_status is not None):
+                raise ConfigError(f"{where}: action '{action}'에는 store_as가 필요합니다")
+            if store_as:
+                store_as = str(store_as)
+                if not _VAR_NAME_RX.fullmatch(store_as):
+                    raise ConfigError(
+                        f"{where}: store_as '{store_as}'는 영문자·숫자·밑줄만 쓸 수 있습니다")
+            else:
+                # str(None)을 그대로 쓰면 'None'이라는 이름의 변수가 생긴다.
+                store_as = None
             if pattern is not None:
                 pattern = str(pattern)
                 try:
@@ -244,7 +266,7 @@ class Step:
             value = _expand_env(raw_value, where)
         return cls(action=action, selector=selector, value=value, secret=secret,
                    store_as=store_as, pattern=pattern, frame=frame,
-                   json_path=json_path)
+                   json_path=json_path, expect_status=expect_status)
 
 
 @dataclass
