@@ -385,3 +385,97 @@ def test_history_identity_separates_browsers(tmp_path):
         "meta": {"base_url": "http://x", "config_path": "c.yaml", "browser": "firefox"},
         "scenarios": []}), encoding="utf-8")
     assert _identity_of(run) == ("http://x", "c.yaml", "firefox")
+
+
+# ----------------------------------------- 트레이스 자격증명 (실측으로 확인됨)
+
+def _report_cfg(mode):
+    from webtest_agent.config import ReportConfig
+    return ReportConfig(trace=mode)
+
+
+def test_trace_defaults_to_on_failure(tmp_path):
+    """기본값이 true면 통과한 실행마다 자격증명이 담긴 파일이 쌓인다.
+
+    trace에는 네트워크 요청이 통째로 들어가고, 로그인한 세션이면 Authorization
+    헤더의 토큰이 평문으로 담긴다. 실제 실행 산출물에서 718자 JWT를 확인했다.
+    """
+    p = tmp_path / "a.yaml"
+    p.write_text("target:\n  base_url: http://x.test\n", encoding="utf-8")
+    cfg = load_config(str(p))
+    assert cfg.report.trace == "on-failure"
+    assert cfg.report.trace_enabled is True        # 기록은 해야 실패 시 남긴다
+    assert cfg.report.trace_only_on_failure is True
+
+
+def test_trace_modes(tmp_path):
+    for raw, enabled, only_fail in (("true", True, False),
+                                    ("false", False, False),
+                                    ("on-failure", True, True)):
+        p = tmp_path / f"{raw}.yaml"
+        p.write_text(f"target:\n  base_url: http://x.test\nreport:\n  trace: {raw}\n",
+                     encoding="utf-8")
+        r = load_config(str(p)).report
+        assert r.trace_enabled is enabled and r.trace_only_on_failure is only_fail
+
+
+def test_invalid_trace_mode_is_rejected(tmp_path):
+    p = tmp_path / "bad.yaml"
+    p.write_text("target:\n  base_url: http://x.test\nreport:\n  trace: sometimes\n",
+                 encoding="utf-8")
+    with pytest.raises(ConfigError, match="on-failure"):
+        load_config(str(p))
+
+
+def _runner_for_trace(mode, tmp_path):
+    r = Runner.__new__(Runner)
+    r.cfg = SimpleNamespace(report=_report_cfg(mode))
+    r.run_dir = tmp_path
+    return r
+
+
+def _result_with_trace(tmp_path, status):
+    from webtest_agent.models import ScenarioResult
+    (tmp_path / "traces").mkdir(exist_ok=True)
+    (tmp_path / "traces" / "01_x.zip").write_bytes(b"trace-with-token")
+    res = ScenarioResult(name="x", kind="spec_check", page="/")
+    res.status = status
+    res.trace = "traces/01_x.zip"
+    return res
+
+
+def test_passing_scenario_trace_is_removed(tmp_path):
+    from webtest_agent.models import PASS as P
+    r = _runner_for_trace("on-failure", tmp_path)
+    res = _result_with_trace(tmp_path, P)
+    r._prune_trace(res)
+    assert res.trace == ""
+    assert not (tmp_path / "traces" / "01_x.zip").exists()
+
+
+def test_failing_scenario_trace_is_kept(tmp_path):
+    """실패는 원인을 찾아야 하므로 남긴다 — 여기서 지우면 도구가 쓸모없어진다."""
+    from webtest_agent.models import FAIL as F
+    r = _runner_for_trace("on-failure", tmp_path)
+    res = _result_with_trace(tmp_path, F)
+    r._prune_trace(res)
+    assert res.trace == "traces/01_x.zip"
+    assert (tmp_path / "traces" / "01_x.zip").exists()
+
+
+def test_trace_true_keeps_everything(tmp_path):
+    from webtest_agent.models import PASS as P
+    r = _runner_for_trace(True, tmp_path)
+    res = _result_with_trace(tmp_path, P)
+    r._prune_trace(res)
+    assert res.trace == "traces/01_x.zip"
+
+
+def test_report_warns_when_traces_remain():
+    """무엇이 들어 있는지 모르고 공유하는 상태가 가장 나쁘다."""
+    from webtest_agent.report import _trace_warning_html
+    kept = SimpleNamespace(trace="traces/01_x.zip")
+    none_kept = SimpleNamespace(trace="")
+    assert "자격증명" not in _trace_warning_html([none_kept])
+    warning = _trace_warning_html([kept, none_kept])
+    assert "1건" in warning and "토큰" in warning

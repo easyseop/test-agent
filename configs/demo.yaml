@@ -213,6 +213,6 @@ link_check:
 report:
   title: 주문 대시보드 자동 테스트 (데모)
   video: true
-  trace: true
+  trace: on-failure
 
 output_dir: runs

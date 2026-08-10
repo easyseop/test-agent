@@ -493,12 +493,46 @@ class AuthConfig:
     per_context: bool = False
 
 
+def _trace_mode(raw) -> str | bool:
+    """trace: true | false | on-failure."""
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw).strip().lower()
+    if text in ("on-failure", "on_failure"):
+        return "on-failure"
+    if text in ("true", "yes", "1"):
+        return True
+    if text in ("false", "no", "0"):
+        return False
+    raise ConfigError(
+        f"report.trace는 true·false·on-failure 중 하나여야 합니다 (받은 값: {raw!r})")
+
+
 @dataclass
 class ReportConfig:
+    """리포트·증적 설정.
+
+    trace는 되감기 기록이다. 실패 원인을 찾을 때 가장 강력하지만, **네트워크
+    요청이 통째로 들어간다.** 로그인한 세션으로 검사하면 Authorization 헤더의
+    토큰과 쿠키가 그대로 담긴다 — 실제로 확인했다. 목 데이터 환경이라도 토큰은
+    진짜로 발급된 값이라, trace 파일을 공유하면 자격증명을 함께 넘기는 셈이다.
+
+    그래서 기본을 on-failure로 둔다. 실패한 시나리오만 남기면 파일 수가 줄고,
+    통과한 실행을 그대로 공유해도 새는 것이 없다. 전부 남기려면 true로 둔다.
+    """
     title: str = "웹 자동 테스트 리포트"
     video: bool = True
-    trace: bool = True
+    trace: str = "on-failure"     # "on-failure" | true | false
     mask_selectors: list[str] = field(default_factory=list)  # 스크린샷에서 가릴 요소(개인정보 등)
+
+    @property
+    def trace_enabled(self) -> bool:
+        """기록을 시작할지. on-failure도 일단 켜야 실패했을 때 남길 수 있다."""
+        return self.trace is not False
+
+    @property
+    def trace_only_on_failure(self) -> bool:
+        return self.trace == "on-failure"
 
 
 @dataclass
@@ -1056,7 +1090,7 @@ def load_config(path: str | Path) -> AgentConfig:
     report = ReportConfig(
         title=str(r.get("title", "웹 자동 테스트 리포트")),
         video=bool(r.get("video", True)),
-        trace=bool(r.get("trace", True)),
+        trace=_trace_mode(r.get("trace", "on-failure")),
         mask_selectors=[str(x) for x in r.get("mask_selectors", [])],
     )
 

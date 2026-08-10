@@ -285,7 +285,7 @@ def _write_walkthrough(path, meta, results) -> None:
         if r.video:
             evidence.append(f"[비디오]({r.video})")
         if r.trace:
-            evidence.append(f"[트레이스]({r.trace})")
+            evidence.append(f"[트레이스]({r.trace}) ⚠ 자격증명 포함 — 외부 공유 주의")
         if evidence:
             lines.append(f"   증적: {' · '.join(evidence)}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -471,7 +471,10 @@ def _scenario_card(run_dir: Path, index: int, r: ScenarioResult) -> str:
     if r.video:
         evidence.append(f"<a href='{_esc(r.video)}'>🎬 비디오(webm)</a>")
     if r.trace:
-        evidence.append(f"<a href='{_esc(r.trace)}'>🔍 트레이스(zip)</a>")
+        evidence.append(
+            f"<a href='{_esc(r.trace)}' title='네트워크 요청이 통째로 담깁니다 "
+            f"— 인증 토큰·쿠키 포함. 외부 공유 전 확인하세요'>🔍 트레이스(zip)</a> "
+            f"<span style='color:#b45309;font-size:11px'>⚠ 토큰 포함</span>")
     if evidence:
         parts.append(f"<p class='evidence'>{''.join(evidence)}"
                      f"<span style='color:#9ca3af;font-size:12px'> — 파일은 리포트와 같은 폴더 기준 상대 경로</span></p>")
@@ -510,6 +513,27 @@ def _a11y_html(discovery_pages: list[dict]) -> str:
     return (f"<h2>접근성 기본 점검 <span style='color:#9ca3af;font-size:13px'>"
             f"(간이 내장 검사 · 정보성, 판정에 미반영 · 총 {total}건)</span></h2>"
             f"<div class='card'><ul class='info' style='font-size:13.5px'>{''.join(items)}</ul></div>")
+
+
+def _trace_warning_html(results) -> str:
+    """트레이스 파일이 남았으면 무엇이 들어 있는지 밝힌다.
+
+    트레이스는 네트워크 요청을 통째로 담으므로, 로그인한 세션으로 검사하면
+    Authorization 헤더의 토큰과 쿠키가 평문으로 들어간다. 파일을 건네는 쪽이
+    그 사실을 모르면 자격증명을 함께 넘기게 된다. 지우는 것보다 먼저 할 일은
+    무엇이 들어 있는지 보이게 하는 것이다.
+    """
+    kept = [r for r in results if getattr(r, "trace", "")]
+    if not kept:
+        return ""
+    return (
+        "<p style='background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;"
+        "padding:10px 12px;font-size:12.5px;color:#78350f;margin-top:12px'>"
+        f"<b>⚠ 트레이스 {len(kept)}건이 남아 있습니다 (traces/).</b> "
+        "트레이스에는 네트워크 요청이 통째로 담겨 <b>인증 토큰·쿠키가 평문으로</b> "
+        "들어갑니다. 이 리포트(report.html)와 스크린샷에는 없지만, "
+        "실행 폴더를 통째로 공유하면 함께 나갑니다. "
+        "필요 없으면 <code>report.trace: false</code>로 두세요.</p>")
 
 
 def _write_html(path, run_dir, meta, summary, results, blocked, diff=None, discovery_pages=None) -> None:
@@ -562,5 +586,6 @@ def _write_html(path, run_dir, meta, summary, results, blocked, diff=None, disco
 {cards}
 <p style="color:#9ca3af;font-size:12px;margin-top:24px">webtest-agent 자동 생성 리포트 ·
 스크린샷은 문서에 내장되어 이 파일 하나로 공유 가능 · 비디오/트레이스는 실행 폴더의 videos/, traces/ 참조</p>
+{_trace_warning_html(results)}
 </div></body></html>"""
     path.write_text(doc, encoding="utf-8")

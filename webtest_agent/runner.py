@@ -510,7 +510,9 @@ class Runner:
 
         try:
             ctx, page, monitor = self.session.new_context(
-                self.cfg.target.base_url, video_dir=video_tmp, trace=self.cfg.report.trace)
+                self.cfg.target.base_url, video_dir=video_tmp,
+                trace=getattr(self.cfg.report, "trace_enabled",
+                              bool(getattr(self.cfg.report, "trace", False))))
             page.set_default_timeout(self._bounded_timeout(5000))
 
             self._reauth_if_needed(page, monitor)
@@ -649,7 +651,11 @@ class Runner:
             if ctx is not None:
                 if page is not None and self.cfg.report.video:
                     video = page.video
-                if self.cfg.report.trace:
+                if getattr(self.cfg.report, "trace_enabled",
+                           bool(getattr(self.cfg.report, "trace", False))):
+                    # 여기서는 일단 저장만 한다. 판정(_verdict)은 이 블록보다
+                    # 뒤에서 일어나므로 res.status가 아직 기본값이라, 여기서
+                    # 남길지 정하면 실패한 시나리오의 기록까지 버리게 된다.
                     try:
                         trace_path = self.run_dir / "traces" / f"{slug}.zip"
                         ctx.tracing.stop(path=str(trace_path))
@@ -672,7 +678,34 @@ class Runner:
 
         res.duration_ms = int((time.monotonic() - started) * 1000)
         self._verdict(res, scenario, hard_fail)
+        self._prune_trace(res)
         return res
+
+    def _prune_trace(self, res: ScenarioResult) -> None:
+        """통과한 시나리오의 되감기 기록을 지운다 (report.trace: on-failure).
+
+        trace에는 네트워크 요청이 통째로 담긴다. 로그인한 세션으로 검사하면
+        Authorization 헤더의 토큰과 쿠키가 평문으로 들어간다 — 실제 실행에서
+        확인했다. 목 데이터 환경이라도 토큰은 진짜로 발급된 값이므로, 파일을
+        건네는 순간 자격증명을 함께 넘기는 셈이 된다.
+
+        실패했을 때는 원인을 찾아야 하므로 남긴다. 통과한 실행은 되감아 볼
+        이유가 없으니, 그 경우만 지워 공유 가능한 산출물로 만든다.
+
+        판정이 끝난 뒤에 호출해야 한다 — 그전에는 res.status가 기본값이다.
+        """
+        # 여러 테스트가 report를 가벼운 대역 객체로 만든다. 새 항목을 필수로
+        # 두면 그 테스트들이 이 기능과 무관하게 깨진다.
+        if not (getattr(self.cfg.report, "trace_only_on_failure", False)
+                and res.status == PASS):
+            return
+        if not res.trace:
+            return
+        try:
+            (self.run_dir / res.trace).unlink(missing_ok=True)
+        except Exception:
+            pass
+        res.trace = ""
 
     def _exec_step(self, page, step: Step, record=None, monitor=None) -> None:
         action = step.action
