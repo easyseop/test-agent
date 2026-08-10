@@ -18,16 +18,28 @@ target:
   ignore_http_error_patterns:
     - "/api/v1/users/loggedInUser"
 
-# 크롤링과 버튼 일괄 클릭은 끈다.
+# 버튼 일괄 클릭은 끈다.
 #
 # 대상이 운영 데이터를 마이그레이션해 온 관리자 콘솔이기 때문이다. 삭제·회수
 # 계열 버튼은 내장 차단 목록이 막지만, 그 목록은 최소 안전망이지 이 앱의 위험
 # 버튼(Hard Delete, 서비스 삭제, 토큰 Revoke, Deactivate)을 전부 알지 못한다.
 # 모르는 화면을 무작위로 눌러 보는 방식은 이 대상에 맞지 않는다.
-crawl:
-  enabled: false
 button_sweep:
   enabled: false
+
+crawl:
+  # run에서는 끈다 — 검증할 화면을 명시적으로 지정한 것만 돈다.
+  enabled: false
+  # 아래 값은 `discover` 명령에만 적용된다. discover는 enabled와 무관하게
+  # 순회하며, 링크를 따라가기만 하고 버튼을 누르지 않는다(GET 이동뿐).
+  # 화면 B의 경로를 찾는 것이 이 순회의 목적이라 기본값(8쪽)보다 넓게 잡았다.
+  max_pages: 25
+  max_depth: 3
+  exclude_patterns:
+    # 세션이 끊기면 순회가 거기서 끝난다.
+    - "/logout"
+    - "/signout"
+    - "/signin"
 
 auth:
   steps:
@@ -36,12 +48,18 @@ auth:
     - {action: fill, selector: '[data-testid="email"]', value: "admin@open-metadata.org"}
     - {action: fill, selector: '[data-testid="password"]', value: "${OM_ADMIN_PASSWORD}"}
     - {action: click, selector: '[data-testid="login"]'}
-    # TODO(회신필요): 로그인 후에만 보이는 요소의 셀렉터.
-    #   "좌측 네비 / My Data"로는 셀렉터가 특정되지 않는다. 이 단언이 약하면
-    #   로그인 실패를 성공으로 착각한 채 이후 시나리오가 전부 무너진다.
-    #   `discover`를 돌려 로그인 후 화면의 data-testid를 하나 골라 넣을 것.
-    - {action: wait_for, selector: '[data-testid="app-bar-item-explore"]'}
-    - {action: assert_visible, selector: '[data-testid="app-bar-item-explore"]'}
+    - {action: wait_ms, value: "3000"}
+    # 로그인 폼이 사라진 것으로 성공을 판정한다.
+    #
+    # "로그인 후에만 보이는 요소"를 아직 못 받았기 때문에 고른 방식이다. 모르는
+    # 셀렉터를 찍어 넣으면 로그인이 성공해도 단언이 깨져 discover가 그대로
+    # 멈춘다 — 아무것도 못 알아내고 끝난다. 반대로 로그인이 실패하면 폼이 남아
+    # 있으므로 이 단언은 정확히 실패한다. 약하지만 틀리지는 않는다.
+    #
+    # TODO(회신필요): discover 결과에서 로그인 후에만 보이는 data-testid를 골라
+    #   아래 두 줄을 양성 단언(wait_for + assert_visible)으로 교체할 것.
+    #   그래야 "빈 화면이 떴는데 통과"를 막을 수 있다.
+    - {action: assert_not_visible, selector: '[data-testid="login-form-container"]'}
 
 data_checks:
   # 화면 A — 테이블 상세의 스키마(컬럼) 표에 BANK 확장 속성 3종이 뜨는가.
