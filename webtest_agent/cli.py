@@ -18,6 +18,11 @@ from .fingerprint import checks_sha256, file_sha256
 from .history import build_trend, diff_for
 from .models import FAIL, PASS, STATUS_LABEL, WARN, RunMeta
 from .notify import build_payload, send_webhook
+from .precheck import (ADVANCING, INFO, MISS, OK, UNCHECKED, Probe,
+                       PrecheckResult, ScenarioProbe, classify,
+                       destructive_hit, exit_code, has_unresolved_var,
+                       missing_columns, step_label)
+from .precheck import render as render_precheck
 from .report import write_reports
 from .reset import ResetFailed, ResetOutcome, run_write_reset
 from .runner import BrowserGoneError, Runner
@@ -895,6 +900,161 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
+def _probe_scenario(runner, page, scenario) -> ScenarioProbe:
+    """시나리오 하나를 걸어가며 셀렉터를 확인한다.
+
+    앞 스텝이 실패해도 멈추지 않고 남은 셀렉터를 계속 조회한다 — 다만 그때부터는
+    화면이 원래 상태가 아니므로 결과를 '확인 못 함'으로 표시한다. 실행은 하지
+    않는다. 막힌 화면에서 클릭을 계속하면 엉뚱한 곳을 누른다.
+    """
+    from .config import _NEEDS_SELECTOR
+
+    sp = ScenarioProbe(name=scenario.name, kind=scenario.kind)
+    try:
+        page.goto(scenario.page or "/", wait_until="load",
+                  timeout=runner._bounded_timeout(runner.cfg.target.nav_timeout_ms))
+        runner._wait(page, runner.cfg.target.settle_ms)
+    except Exception as err:
+        sp.error = _short_exc(err)
+        return sp
+
+    blocked = False
+    for i, step in enumerate(scenario.steps, start=1):
+        label = step_label(i, step.action, step.selector)
+        if not step.selector:
+            continue          # 셀렉터가 없는 스텝은 이 명령이 볼 것이 없다
+        if has_unresolved_var(step.selector):
+            sp.probes.append(Probe(label, UNCHECKED,
+                                   "앞 단계에서 뽑는 값이 들어 있어 지금은 확정 못 함"))
+            continue
+        try:
+            count = runner._scope(page, step, step.frame).locator(step.selector).count()
+        except Exception as err:
+            # 셀렉터 문법 오류·프레임 없음. 이건 앞이 막혔든 아니든 설정 문제다.
+            sp.probes.append(Probe(label, MISS, _short_exc(err)))
+            blocked = True
+            continue
+        status = classify(count, blocked, step.action in _NEEDS_SELECTOR)
+        detail = f"{count}개" if count else ""
+        sp.probes.append(Probe(label, status, detail))
+        if status == MISS:
+            blocked = True
+        elif status == OK and step.action in ADVANCING and not blocked:
+            hit = destructive_hit(step)
+            if hit:
+                sp.probes.append(Probe(label, UNCHECKED,
+                                       f"안전 차단: 파괴적 동작으로 보여 실행하지 않음 ({hit}) "
+                                       f"— 이후 스텝은 확인 못 함"))
+                blocked = True
+                continue
+            try:
+                runner._exec_step(page, step)
+                runner._wait(page, runner.cfg.target.settle_ms)
+            except Exception as err:
+                sp.probes.append(Probe(label, MISS, f"실행 실패: {_short_exc(err)}"))
+                blocked = True
+
+    spec = getattr(scenario, "spec", None)
+    table = getattr(spec, "ui_table", None) if spec else None
+    if table:
+        sp.probes.extend(_probe_table(page, table, blocked))
+    return sp
+
+
+def _probe_table(page, table, blocked: bool) -> list[Probe]:
+    """대조할 표가 실제로 거기 있는지, 설정한 열 이름이 헤더에 있는지.
+
+    열 이름은 로케일이 바뀌면 통째로 달라진다. 실행해서 '대조 0행'이 나와야
+    아는 것과 돌리기 전에 아는 것은 다르다.
+    """
+    from .datacheck import extract_table
+
+    out: list[Probe] = []
+    label = f"표  {table.selector}"
+    try:
+        count = page.locator(table.selector).count()
+    except Exception as err:
+        return [Probe(label, MISS, _short_exc(err))]
+    out.append(Probe(label, classify(count, blocked, True), f"{count}개" if count else ""))
+    if not count or blocked:
+        return out
+
+    try:
+        headers, rows = extract_table(page, table.selector)
+    except Exception as err:
+        return out + [Probe(label, UNCHECKED, f"헤더를 읽지 못함: {_short_exc(err)}")]
+
+    out.append(Probe(f"      헤더 {len(headers)}개 · {len(rows)}행", INFO,
+                     " | ".join(headers[:8])))
+    absent = missing_columns(list(table.columns or []), headers)
+    if absent:
+        out.append(Probe(f"      ui_table.columns", MISS,
+                         f"화면 헤더에 없는 열: {absent}"))
+    if table.count_selector:
+        n = page.locator(table.count_selector).count()
+        out.append(Probe(f"      count_selector  {table.count_selector}",
+                         classify(n, blocked, True), f"{n}개" if n else ""))
+    return out
+
+
+def cmd_check_config(args: argparse.Namespace) -> int:
+    """돌리기 전에 셀렉터를 전부 확인한다.
+
+    `run`은 첫 실패에서 그 시나리오를 접으므로 한 번에 하나씩만 드러난다.
+    여기서는 끝까지 걸어가며 못 찾은 것을 전부 모은다. 셀렉터가 **있는지**만
+    본다 — 기대값이 맞는지는 보지 않는다. 그건 실행해야 안다.
+    """
+    cfg = load_config(args.config)
+    engine = _resolve_engine(args, cfg)
+    result = PrecheckResult()
+
+    scenarios = build_spec_checks(cfg) + build_data_checks(cfg)
+    if cfg.write_checks:
+        # 쓰기 검증은 데이터를 바꾼다. 조용히 빼면 '전부 확인했다'로 읽히므로
+        # 건너뛴 사실을 남긴다.
+        result.skipped.append(
+            f"write_checks {len(cfg.write_checks)}개 — 데이터를 바꾸므로 이 명령은 실행하지 않습니다")
+    if not scenarios:
+        print("확인할 시나리오가 없습니다 (spec_checks·data_checks가 비어 있습니다).",
+              file=sys.stderr)
+        return 2
+
+    run_dir = _make_run_dir(cfg, args.out)
+    with BrowserSession(headless=not args.headed, engine=engine) as session:
+        session.locale = cfg.target.locale
+        runner = Runner(session, cfg, run_dir)
+        if cfg.auth:
+            state_path = run_dir / "auth_state.json"
+            session.configure_storage_state(
+                state_path, preserve=bool(getattr(args, "preserve_auth_state", False)))
+            try:
+                runner.authenticate(cfg.auth.steps, state_path)
+            except Exception as err:
+                result.fatal = f"로그인 실패 — {_short_exc(err)}"
+                print(render_precheck(result), file=sys.stderr)
+                return exit_code(result)
+            session.activate_storage_state()
+        try:
+            _check_target_available(session, cfg)
+        except RunInfrastructureError as err:
+            result.fatal = str(err)
+            print(render_precheck(result), file=sys.stderr)
+            return exit_code(result)
+
+        ctx, page, _monitor = session.new_context(cfg.target.base_url)
+        try:
+            page.set_default_timeout(runner._bounded_timeout(5000))
+            for scenario in scenarios:
+                runner._reset_vars()
+                runner._reset_pages()
+                result.scenarios.append(_probe_scenario(runner, page, scenario))
+        finally:
+            ctx.close()
+
+    print(render_precheck(result))
+    return exit_code(result)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="webtest_agent",
@@ -933,6 +1093,11 @@ def main(argv: list[str] | None = None) -> int:
     p_run.set_defaults(func=cmd_run)
     p_disc = sub.add_parser("discover", parents=[common], help="크롤링·인벤토리만 수행")
     p_disc.set_defaults(func=cmd_discover)
+
+    p_check = sub.add_parser(
+        "check-config", parents=[common],
+        help="돌리기 전에 셀렉터가 실제로 맞는지 전부 확인 (기대값은 보지 않음)")
+    p_check.set_defaults(func=cmd_check_config)
 
     # 이력 조회는 대상 앱에 접속하지 않는다. 이미 쌓인 report.json만 읽으므로
     # 브라우저 옵션(--headed 등)을 공유하지 않는다.
