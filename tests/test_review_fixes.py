@@ -204,7 +204,10 @@ def test_console_errors_respect_ignore_patterns():
         ("Failed to load resource: 503", "http://app/health"),
         ("Uncaught TypeError: x is not a function", ""),
     ])
-    assert runner._console_errors(monitor) == ["Uncaught TypeError: x is not a function"]
+    kept, ignored = runner._console_errors(monitor)
+    assert kept == ["Uncaught TypeError: x is not a function"]
+    # 걸러낸 것도 버리지 않고 남긴다 — 리포트가 "에러 없음"으로 보이면 안 된다.
+    assert ignored == ["Failed to load resource: 503"]
 
 
 def test_console_errors_without_url_are_kept():
@@ -212,7 +215,9 @@ def test_console_errors_without_url_are_kept():
     runner, cfg = _runner_with_ignores([r".*"])
     runner.cfg = cfg
     monitor = _FakeMonitor([("Uncaught ReferenceError: showSummry", "")])
-    assert runner._console_errors(monitor) == ["Uncaught ReferenceError: showSummry"]
+    kept, ignored = runner._console_errors(monitor)
+    assert kept == ["Uncaught ReferenceError: showSummry"]
+    assert ignored == []
 
 
 def test_favicon_console_error_is_dropped_by_monitor():

@@ -447,6 +447,19 @@ def _scenario_card(run_dir: Path, index: int, r: ScenarioResult) -> str:
         parts.append(f"<pre style='background:#111;color:#f87171;padding:10px;border-radius:6px;"
                      f"font-size:12px;overflow-x:auto'>{_esc(errs)}</pre>")
 
+    # 무시한 에러도 드러낸다. 통과한 시나리오라도 무엇을 빼고 통과했는지
+    # 보이지 않으면, 무시 목록을 넓게 적은 실행이 깨끗한 실행처럼 보인다.
+    ignored = getattr(r, "ignored_console_errors", [])
+    if ignored:
+        shown = "\n".join(ignored[:5])
+        more = f"\n… 외 {len(ignored) - 5}건" if len(ignored) > 5 else ""
+        parts.append(
+            f"<details style='margin-top:8px'><summary style='cursor:pointer;color:#a16207;"
+            f"font-size:12px'>⚠ 무시 목록으로 판정에서 뺀 콘솔 에러 {len(ignored)}건 "
+            f"(설정: target.ignore_console_patterns)</summary>"
+            f"<pre style='background:#1c1917;color:#d6d3d1;padding:10px;border-radius:6px;"
+            f"font-size:12px;overflow-x:auto'>{_esc(shown + more)}</pre></details>")
+
     evidence = []
     if r.video:
         evidence.append(f"<a href='{_esc(r.video)}'>🎬 비디오(webm)</a>")

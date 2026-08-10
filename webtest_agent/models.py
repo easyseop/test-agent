@@ -113,6 +113,10 @@ class ScenarioResult:
     reasons: list[str] = field(default_factory=list)
     steps: list[StepResult] = field(default_factory=list)
     console_errors: list[str] = field(default_factory=list)
+    # 무시 목록에 걸려 판정에서 뺀 콘솔 에러. 세지 않고 버리면 리포트가
+    # "에러 없음"으로 보인다. 그러면 무시 목록을 넓게 적어 통과시킨 실행과
+    # 진짜로 깨끗한 실행을 구별할 수 없다. 무엇을 몇 건 뺐는지 항상 남긴다.
+    ignored_console_errors: list[str] = field(default_factory=list)
     page_errors: list[str] = field(default_factory=list)
     http_failures: list[HttpFailure] = field(default_factory=list)
     dialogs: list[str] = field(default_factory=list)

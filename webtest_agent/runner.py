@@ -376,15 +376,17 @@ class Runner:
             for p in getattr(self.cfg.target, "ignore_console_patterns", []) or []
         ]
         urls = getattr(monitor, "console_error_urls", [])
-        kept = []
+        kept, ignored = [], []
         for index, text in enumerate(monitor.console_errors):
             url = urls[index] if index < len(urls) else ""
             if url and any(p.search(url) for p in url_patterns):
+                ignored.append(text)
                 continue
             if any(p.search(text or "") for p in text_patterns):
+                ignored.append(text)
                 continue
             kept.append(text)
-        return kept
+        return kept, ignored
 
     def _bounded_timeout(self, requested_ms: int) -> int:
         if self.deadline_monotonic is None:
@@ -563,7 +565,8 @@ class Runner:
                 sr.duration_ms = int((time.monotonic() - t0) * 1000)
                 res.steps.append(sr)
 
-            res.console_errors = self._console_errors(monitor)
+            res.console_errors, res.ignored_console_errors = \
+                self._console_errors(monitor)
             res.page_errors = list(monitor.page_errors)
             res.http_failures = self._http_failures(monitor.http_failures)
             res.dialogs = monitor.dialogs[base_dialog:]

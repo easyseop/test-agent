@@ -20,7 +20,7 @@ def _console(cfg, errors, urls):
     r.cfg = cfg
     monitor = SimpleNamespace(console_errors=list(errors),
                               console_error_urls=list(urls))
-    return r._console_errors(monitor)
+    return r._console_errors(monitor)[0]
 
 
 def _cfg(ignore_console=None, ignore_http=None):
@@ -62,6 +62,23 @@ def test_url_filter_still_works():
         ["http://x.test/optional.png"],
     )
     assert kept == []
+
+
+def test_ignored_console_errors_are_reported_not_discarded():
+    """무시한 에러는 판정에서만 빠지고 기록에는 남는다.
+
+    조용히 버리면 무시 목록을 넓게 적어 통과시킨 실행과 진짜로 깨끗한 실행이
+    리포트에서 똑같아 보인다. 그러면 무시 목록이 곧 은폐 수단이 된다.
+    """
+    r = Runner.__new__(Runner)
+    r.cfg = _cfg(ignore_console=[r"i18next"])
+    monitor = SimpleNamespace(
+        console_errors=["i18next::translator: missingKey", "TypeError: boom"],
+        console_error_urls=["", ""],
+    )
+    kept, ignored = r._console_errors(monitor)
+    assert kept == ["TypeError: boom"]
+    assert ignored == ["i18next::translator: missingKey"]
 
 
 def test_console_pattern_is_validated_at_load(tmp_path):
