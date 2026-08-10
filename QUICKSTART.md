@@ -40,8 +40,22 @@ python -m playwright install chromium
 python -m webtest_agent discover -c configs/우리사이트.yaml
 ```
 
-`runs/<시각>/discovery.json`에 페이지·버튼·링크·입력칸 목록이 생긴다.
+`runs/<시각>/discovery.json`에 페이지·버튼·링크·입력칸·표 목록이 생긴다.
 처음에는 `target.base_url`만 적힌 최소 YAML로 시작하면 된다.
+
+표는 화면에 바로 찍히므로 `discovery.json`을 열지 않아도 된다.
+
+```
+  / — 버튼 4 · 링크 4 · 입력 3 · 셀렉트 2 · 표 1  (주문 관리 대시보드)
+      #orders-table  123행  [주문번호 | 고객 | 상태 | 카테고리 | 금액 | 주문일]
+```
+
+`ui_table`의 `selector`와 `columns`가 그대로 여기 있다. `id`가 없으면
+`data-testid` 같은 테스트용 속성을 셀렉터로 쓴다 — 자리 기반 경로보다 오래 간다.
+
+**행 수를 같이 보는 이유.** 1행짜리 표를 정답원과 대조해봐야 증명되는 게 거의
+없다. 그 사실은 설정을 **쓰기 전에** 알아야지, 다 돌리고 리포트를 열어야 알면
+늦다. 안 보이는 표(`※화면에 안 보임`)와 0행 표도 지우지 않고 그대로 보여준다.
 
 ### 2-2. "이건 이래야 한다"를 적는다
 

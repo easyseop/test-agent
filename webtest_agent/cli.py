@@ -883,7 +883,15 @@ def cmd_discover(args: argparse.Namespace) -> int:
     for p in discovery.pages:
         e = p.elements
         print(f"  {p.path} — 버튼 {len(e.get('buttons', []))} · 링크 {len(e.get('links', []))}"
-              f" · 입력 {len(e.get('inputs', []))} · 셀렉트 {len(e.get('selects', []))}  ({p.title})")
+              f" · 입력 {len(e.get('inputs', []))} · 셀렉트 {len(e.get('selects', []))}"
+              f" · 표 {len(e.get('tables', []))}  ({p.title})")
+        # 표는 행 수까지 여기서 보여준다. 설정을 다 쓰고 실행해 리포트를 열어야
+        # "이 표 1행짜리였네"를 아는 것과, 쓰기 전에 아는 것은 다르다.
+        for t in e.get("tables", []):
+            head = " | ".join(t.get("headers", [])[:6]) or "(헤더 없음)"
+            mark = "" if t.get("visible", True) else "  ※화면에 안 보임"
+            print(f"      {t.get('selector', '')}  {t.get('row_count', 0)}행"
+                  f"  [{head}]{mark}")
     return 0
 
 

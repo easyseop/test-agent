@@ -33,6 +33,18 @@ JS_INVENTORY = r"""() => {
     return parts.join(' > ');
   }
   const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  // 표 셀렉터는 화면 구조가 조금만 바뀌어도 깨지는 nth-of-type 경로보다
+  // 테스트용 속성이 훨씬 오래 간다. 있으면 그걸 쓴다. 값에 따옴표·공백이
+  // 섞이면 인용 규칙이 갈리므로, 안전한 문자로만 된 값에서만 쓴다.
+  const TESTID_ATTRS = ['data-testid', 'data-test-id', 'data-test', 'data-qa'];
+  const stableSelector = (el) => {
+    if (el.id) return '#' + CSS.escape(el.id);
+    for (const attr of TESTID_ATTRS) {
+      const v = el.getAttribute(attr);
+      if (v && /^[\w.:-]+$/.test(v)) return '[' + attr + '="' + v + '"]';
+    }
+    return cssPath(el);
+  };
   // 아이콘 전용 버튼은 innerText가 비어 있다. aria-label/title/alt까지 텍스트로 모아야
   // 위험 동작(삭제 등) 차단 판정이 그런 버튼에도 적용된다.
   const label = (el) => [
@@ -51,6 +63,31 @@ JS_INVENTORY = r"""() => {
     selects: Array.from(document.querySelectorAll('select')).filter(visible)
       .map(el => ({ ...info(el), name: el.name || '',
                     options: Array.from(el.options).map(o => o.value).slice(0, 20) })),
+    tables: Array.from(document.querySelectorAll('table, [role=table], [role=grid]'))
+      .slice(0, 20).map(el => {
+        // 표 안에 표가 들어 있으면 안쪽 th·tr까지 딸려 온다. 자기 표의
+        // 것만 센다 — 안 그러면 헤더가 뒤섞이고 행 수가 부풀려진다.
+        const mine = (nodes) => Array.from(nodes).filter(
+          n => n.closest('table, [role=table], [role=grid]') === el);
+        const heads = mine(el.querySelectorAll('th, [role=columnheader]'));
+        let headers = heads.map(h => label(h)).slice(0, 30);
+        if (!headers.length) {
+          const first = mine(el.querySelectorAll('tr, [role=row]'))[0];
+          headers = first ? Array.from(first.children).map(c => label(c)).slice(0, 30) : [];
+        }
+        const rows = mine(el.querySelectorAll('tr, [role=row]')).filter(r => {
+          if (r.closest('thead')) return false;
+          const cells = Array.from(r.children);
+          // 셀이 전부 헤더인 줄은 데이터 행이 아니다. 행 머리글(th)이 섞인
+          // 줄은 데이터 행이 맞으므로 every로 본다.
+          return cells.length > 0 && !cells.every(
+            c => c.tagName === 'TH' || c.getAttribute('role') === 'columnheader');
+        });
+        // 숨은 표도 버리지 않고 표시만 한다. 탭을 안 열어 안 보이는 표를
+        // 목록에서 지우면 "그런 표는 없다"로 읽힌다.
+        return { selector: stableSelector(el), headers: headers,
+                 row_count: rows.length, visible: visible(el) };
+      }),
   };
 }"""
 
