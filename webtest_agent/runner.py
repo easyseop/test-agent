@@ -1258,10 +1258,27 @@ class Runner:
                     f" (변화 {wc.delta:+g}, 기대 {wc.expected_delta:+d})")
 
         step_failed = any(s.status == "fail" for s in res.steps)
-        if (hard_fail or step_failed or res.console_errors or res.page_errors
-                or res.http_failures or dc_failed or wc_failed or vis_failed
-                or rc_failed or pc_failed):
+
+        # '판정 불가'와 '제품 결함'을 가른다. 정답원이 죽어 대조를 못 한 것은
+        # 화면이 틀렸다는 뜻이 아니다. 둘을 같은 실패로 묶으면, 없는 결함을
+        # 있다고 보고해 멀쩡한 코드를 뒤지게 만든다.
+        unjudged = [note for note in (
+            (dc.note if dc is not None else ""),
+            (wc.note if wc is not None else ""),
+        ) if note]
+        real_failure = bool(
+            hard_fail or step_failed or res.console_errors or res.page_errors
+            or res.http_failures or vis_failed or rc_failed or pc_failed
+            or (dc_failed and not (dc is not None and dc.note))
+            or (wc_failed and not (wc is not None and wc.note)))
+
+        if real_failure or dc_failed or wc_failed:
             res.status = FAIL
+            # 판정을 막은 것만 있고 진짜 결함이 없을 때만 '판정 불가'로 본다.
+            # 둘 다 있으면 제품 결함 쪽이 우선이다 — 결함을 가리면 안 된다.
+            if unjudged and not real_failure:
+                res.not_proven = True
+                res.not_proven_reason = unjudged[0]
         elif vis_warn:
             res.status = WARN
         elif scenario.kind.startswith("sweep") and res.effect == "무반응":

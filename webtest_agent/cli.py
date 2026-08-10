@@ -619,8 +619,28 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     # 간헐(flaky) 강등은 '재현이 불안정한 제품 결함'이지 통과가 아니다.
     # 경고로 낮춰 증적을 구분하되, 실행 상태와 종료코드에서는 실패로 남긴다.
-    unresolved = any(r.status == FAIL or r.flaky for r in results)
-    meta.status = "failed" if unresolved else "passed"
+    # '판정 불가'와 '제품 결함'을 종료코드에서도 가른다.
+    #
+    #   제품 결함이 있으면            → 1. 판정 불가가 섞여 있어도 결함을 가리지 않는다.
+    #   결함은 없는데 판정 불가가 있으면 → 2. 통과라고 말할 수 없다.
+    #   전부 판정했고 전부 통과        → 0
+    #
+    # 정답원이 죽어 대조를 못 한 실행을 1로 내보내면 "제품이 기대와 다름"이
+    # 되어, CI를 보는 사람이 멀쩡한 코드를 뒤지게 된다.
+    not_proven = [r for r in results if getattr(r, "not_proven", False)]
+    real_failures = [r for r in results
+                     if r.status == FAIL and not getattr(r, "not_proven", False)]
+    unresolved = bool(real_failures) or any(r.flaky for r in results)
+    if unresolved:
+        meta.status = "failed"
+    elif not_proven:
+        # 실행은 했지만 유효한 판정을 못 낸 검사가 남았다. 리포트와 종료코드가
+        # 어긋나면 안 되므로 리포트를 쓰기 전에 확정한다.
+        meta.status = "infra_error"
+        meta.error = (f"검증 불가 {len(not_proven)}건 — "
+                      f"{not_proven[0].not_proven_reason[:120]}")
+    else:
+        meta.status = "passed"
     diff = diff_for(run_dir.parent, run_dir, {r.name: r.status for r in results},
                     identity=(cfg.target.base_url, cfg.config_path, meta.browser))
     summary = write_reports(run_dir, meta, results, blocked,
@@ -666,6 +686,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                            build_payload(meta, summary, results, str(run_dir)))
         print(f"웹훅 알림 {'전송 실패: ' + err if err else '전송 완료'}")
 
+    if not unresolved and not_proven:
+        print(f"검증 불가 {len(not_proven)}건 — 제품 결함은 발견되지 않았으나 "
+              "판정하지 못한 검사가 있어 통과로 처리하지 않습니다:", file=sys.stderr)
+        for r in not_proven:
+            print(f"  · {r.name}: {r.not_proven_reason[:160]}", file=sys.stderr)
+        return 2
+    if not_proven:
+        print(f"참고: 검증 불가 {len(not_proven)}건이 함께 있습니다 "
+              "(제품 결함이 있어 종료코드는 1입니다)")
     return 1 if unresolved else 0
 
 

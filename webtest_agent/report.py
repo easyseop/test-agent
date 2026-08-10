@@ -449,6 +449,16 @@ def _scenario_card(run_dir: Path, index: int, r: ScenarioResult) -> str:
         if figures:
             parts.append(f"<div class='shots'>{''.join(figures)}</div>")
 
+    if getattr(r, "not_proven", False):
+        # 판정 불가와 제품 결함이 리포트에서도 구분되어야 한다. 같은 빨간색으로
+        # 보이면 읽는 사람이 멀쩡한 코드를 뒤진다.
+        parts.append(
+            "<p style='background:#eff6ff;border:1px solid #3b82f6;border-radius:6px;"
+            "padding:9px 12px;font-size:12.5px;color:#1e3a8a;margin:8px 0'>"
+            "<b>판정 불가 — 제품 결함이 아닙니다.</b> "
+            f"{_esc(r.not_proven_reason)[:200]}<br>"
+            "화면이 맞는지 틀린지 확인하지 못했습니다. 정답원을 복구한 뒤 다시 실행하세요.</p>")
+
     if r.console_errors or r.page_errors:
         errs = "\n".join((r.console_errors + r.page_errors)[:5])
         parts.append(f"<pre style='background:#111;color:#f87171;padding:10px;border-radius:6px;"

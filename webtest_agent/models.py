@@ -117,6 +117,12 @@ class ScenarioResult:
     # "에러 없음"으로 보인다. 그러면 무시 목록을 넓게 적어 통과시킨 실행과
     # 진짜로 깨끗한 실행을 구별할 수 없다. 무엇을 몇 건 뺐는지 항상 남긴다.
     ignored_console_errors: list[str] = field(default_factory=list)
+    # 이 시나리오가 실패한 이유가 '제품이 기대와 다름'이 아니라 '판정할 수
+    # 없었음'인가. 정답원(DB·API)이 죽으면 화면이 맞는지 틀린지 알 수 없는데,
+    # 이걸 제품 결함으로 보고하면 멀쩡한 코드를 뒤지게 만든다. 상태는 FAIL로
+    # 두되(통과로 세면 안 되므로) 종류를 구분한다.
+    not_proven: bool = False
+    not_proven_reason: str = ""
     page_errors: list[str] = field(default_factory=list)
     http_failures: list[HttpFailure] = field(default_factory=list)
     dialogs: list[str] = field(default_factory=list)

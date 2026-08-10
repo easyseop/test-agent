@@ -479,3 +479,68 @@ def test_report_warns_when_traces_remain():
     assert "자격증명" not in _trace_warning_html([none_kept])
     warning = _trace_warning_html([kept, none_kept])
     assert "1건" in warning and "토큰" in warning
+
+
+# ------------------------------- 정답원 장애 ≠ 제품 실패 (경쟁 분석 8.2)
+
+def _verdict_runner():
+    r = Runner.__new__(Runner)
+    r.cfg = SimpleNamespace(report=SimpleNamespace(trace=False))
+    return r
+
+
+def _scn(kind="data_check"):
+    from webtest_agent.scenarios import Scenario
+    return Scenario(name="t", kind=kind, page="/", steps=[])
+
+
+def _res_with(dc=None, steps=None, console=None):
+    from webtest_agent.models import ScenarioResult, StepResult
+    res = ScenarioResult(name="t", kind="data_check", page="/")
+    res.data_check = dc
+    res.steps = steps or []
+    res.console_errors = console or []
+    return res
+
+
+def test_dead_oracle_is_marked_not_proven():
+    """정답원이 죽으면 화면이 맞는지 틀린지 알 수 없다.
+
+    이걸 제품 결함으로 보고하면 멀쩡한 코드를 뒤지게 만든다. 통과로 세지도
+    않으므로 상태는 FAIL이되, 종류를 구분한다.
+    """
+    from webtest_agent.models import DataCheckResult, FAIL
+    dc = DataCheckResult(note="정답원(DB/API) 조회 실패: connection refused")
+    res = _res_with(dc=dc)
+    _verdict_runner()._verdict(res, _scn(), hard_fail=False)
+    assert res.status == FAIL          # 통과로 세지 않는다
+    assert res.not_proven is True
+    assert "정답원" in res.not_proven_reason
+
+
+def test_real_mismatch_is_not_marked_not_proven():
+    """값이 실제로 다른 것은 제품 결함이다 — 판정 불가로 눙치면 안 된다."""
+    from webtest_agent.models import DataCheckResult, FAIL
+    dc = DataCheckResult(matched=False, ui_count=3, db_count=5, missing_total=2)
+    res = _res_with(dc=dc)
+    _verdict_runner()._verdict(res, _scn(), hard_fail=False)
+    assert res.status == FAIL
+    assert res.not_proven is False
+
+
+def test_real_failure_wins_over_not_proven():
+    """둘 다 있으면 제품 결함이 우선이다. 결함을 가리면 안 된다."""
+    from webtest_agent.models import DataCheckResult, FAIL
+    dc = DataCheckResult(note="정답원 조회 실패")
+    res = _res_with(dc=dc, console=["TypeError: boom"])
+    _verdict_runner()._verdict(res, _scn(), hard_fail=False)
+    assert res.status == FAIL
+    assert res.not_proven is False, "진짜 결함이 있는데 판정 불가로 표시되면 결함이 묻힌다"
+
+
+def test_passing_check_is_untouched():
+    from webtest_agent.models import DataCheckResult, PASS
+    dc = DataCheckResult(matched=True, ui_count=3, db_count=3)
+    res = _res_with(dc=dc)
+    _verdict_runner()._verdict(res, _scn(), hard_fail=False)
+    assert res.status == PASS and res.not_proven is False
