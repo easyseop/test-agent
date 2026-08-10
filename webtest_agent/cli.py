@@ -13,6 +13,7 @@ from . import __version__
 from .browser import ENGINES, BrowserSession
 from .config import AgentConfig, ConfigError, load_config
 from .discovery import Discovery, crawl
+from .fingerprint import checks_sha256, file_sha256
 from .history import build_trend, diff_for
 from .models import FAIL, PASS, STATUS_LABEL, WARN, RunMeta
 from .notify import build_payload, send_webhook
@@ -354,6 +355,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         playwright_version=_pw_version(),
         python_version=platform.python_version(),
         agent_version=__version__,
+        # 이 리포트가 어떤 테스트 정의로 나왔는지. 없으면 "지난주 통과랑 같은
+        # 설정인가"를 사람이 눈으로 대조해야 한다.
+        config_sha256=file_sha256(cfg.config_path),
+        checks_sha256=checks_sha256(cfg),
     )
     import time as _time
     t0 = _time.monotonic()
@@ -642,7 +647,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         meta.status = "passed"
     diff = diff_for(run_dir.parent, run_dir, {r.name: r.status for r in results},
-                    identity=(cfg.target.base_url, cfg.config_path, meta.browser))
+                    identity=(cfg.target.base_url, cfg.config_path, meta.browser),
+                    cur_checks_sha256=meta.checks_sha256)
     summary = write_reports(run_dir, meta, results, blocked,
                             [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y,
               "a11y_error": getattr(p, "a11y_error", "")}
@@ -674,6 +680,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             if diff.get(key):
                 parts.append(f"{label} {len(diff[key])}")
         print(f"전회차({diff['prev_run']}) 대비: " + (" · ".join(parts) if parts else "변화 없음"))
+        if diff.get("checks_changed"):
+            # 통과 건수가 같아도 검사 내용이 달라졌으면 같은 비교가 아니다.
+            # 대조할 열을 하나 빼도 결과만 보면 지난주와 똑같아 보인다.
+            print("  ⚠ 검사 정의가 직전 실행과 다릅니다 — 같은 조건의 비교가 아닙니다")
     for r in results:
         if r.status == FAIL:
             reason = r.reasons[0] if r.reasons else ""

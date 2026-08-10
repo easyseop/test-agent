@@ -149,6 +149,8 @@ def _diff_lines(diff: dict | None) -> list[str]:
     if not diff:
         return []
     lines = ["", f"## 전회차 대비 (직전 실행: {diff['prev_run']})"]
+    if diff.get("checks_changed"):
+        lines.append("- ⚠️ **검사 정의가 직전 실행과 다릅니다** — 같은 조건의 비교가 아닙니다")
     changed = False
     for key in ("new_failures", "fixed", "still_failing", "added", "removed"):
         names = diff.get(key) or []
@@ -170,6 +172,9 @@ def _meta_lines(meta: RunMeta, summary: dict) -> list[str]:
         f"- 실행: {meta.started_at} ~ {meta.finished_at} ({meta.duration_ms / 1000:.1f}s)",
         f"- 환경: {_engine_label(meta)} · Playwright {meta.playwright_version}"
         f" · Python {meta.python_version} · agent {meta.agent_version}",
+        f"- 테스트 정의: 설정 `{(meta.config_sha256 or chr(45))[:12]}`"
+        f" · 검사 `{(meta.checks_sha256 or chr(45))[:12]}`"
+        f" — 이 값이 지난 실행과 다르면 같은 조건의 비교가 아닙니다",
         f"- 결과: **통과 {summary['pass']} · 경고 {summary['warn']} · 실패 {summary['fail']}** (총 {summary['total']})",
     ]
     if meta.error:

@@ -67,15 +67,32 @@ def compute_diff(prev_run_id: str, prev: dict[str, str], cur: dict[str, str]) ->
     }
 
 
+def _checks_fingerprint(run_dir: Path) -> str:
+    try:
+        data = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return str((data.get("meta") or {}).get("checks_sha256", ""))
+
+
 def diff_for(output_root: Path, current_run_dir: Path, cur_statuses: dict[str, str],
-             identity: tuple[str, str, str] | None = None) -> dict | None:
+             identity: tuple[str, str, str] | None = None,
+             cur_checks_sha256: str = "") -> dict | None:
     prev_dir = find_previous_run(output_root, current_run_dir, identity=identity)
     if prev_dir is None:
         return None
     prev_statuses = load_statuses(prev_dir)
     if not prev_statuses:
         return None
-    return compute_diff(prev_dir.name, prev_statuses, cur_statuses)
+    diff = compute_diff(prev_dir.name, prev_statuses, cur_statuses)
+
+    # 검사 정의가 달라졌으면 "지난주와 같은 결과"라는 말이 성립하지 않는다.
+    # 대조할 열을 하나 빼도 통과 건수는 그대로라 결과만 봐서는 알 수 없다.
+    prev_sha = _checks_fingerprint(prev_dir)
+    if prev_sha and cur_checks_sha256:
+        diff["checks_changed"] = prev_sha != cur_checks_sha256
+        diff["prev_checks_sha256"] = prev_sha
+    return diff
 
 
 def collect_runs(output_root: Path, identity: tuple[str, str, str] | None = None,

@@ -166,6 +166,10 @@ class RunMeta:
     playwright_version: str = ""
     python_version: str = ""
     agent_version: str = ""
+    # 이 리포트가 어떤 테스트 정의로 나왔는지. "통과"만 남으면 누가 대조할 열을
+    # 빼거나 단언을 느슨하게 바꿔도 지난주와 똑같아 보인다.
+    config_sha256: str = ""       # 설정 파일 바이트
+    checks_sha256: str = ""       # 검증 내용만 추린 지문 (주석 수정에는 안 바뀜)
     status: str = "running"       # running | passed | failed | infra_error
     error: str = ""               # 실행 불가 사유 (infra_error일 때)
     # 쓰기 검증 전 데이터 초기화 기록. 되돌리지 않은 데이터 위에서 낸 판정인지
