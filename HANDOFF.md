@@ -55,6 +55,8 @@ python3 -m pytest tests/ -q                     # 557 passed 여야 정상
 ```
 
 읽는 순서: **이 문서 → `CLAUDE.md`(규약) → `docs/02-design.md` §5(판정 규칙)**.
+설정을 새로 만들어야 하면 `docs/04-config-walkthrough.md`가 순서대로 안내한다
+(아무것도 없는 상태 → discover → inspect-api → check-config → 실행).
 그 다음 §7 "다음 작업"에서 이어간다.
 
 ---
