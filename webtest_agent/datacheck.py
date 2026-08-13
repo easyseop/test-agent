@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import urllib.parse
 import urllib.request
 from collections import Counter
 from decimal import Decimal
@@ -142,6 +143,11 @@ def extract_api_rows(data, rows_path: str, columns: list[str]) -> list[tuple]:
 def run_api_query(api: ApiSpec, base_url: str) -> tuple[list[str], list[tuple]]:
     """REST API를 정답원으로 조회 — 화면이 백엔드 응답을 올바르게 표시하는지(표시 계층) 검증용."""
     url = api.url if "://" in api.url else base_url.rstrip("/") + api.url
+    # 한글·공백처럼 ASCII가 아닌 글자가 든 주소는 그대로 보낼 수 없다. 이 한 줄을
+    # 빼면 `?category=전자기기` 같은 정답원 조회가 통째로 실패하고, 화면이 맞는지
+    # 알 수 없게 되어 판정 불가로 끝난다. 이미 `%XX`로 인코딩된 부분을 두 번
+    # 인코딩하지 않도록 `%`도 안전 문자에 넣는다.
+    url = urllib.parse.quote(url, safe="%:/?#[]@!$&'()*+,;=~-._")
     req = urllib.request.Request(url, headers=api.headers or {})
     with urllib.request.urlopen(req, timeout=15) as resp:
         # JSON 소수도 binary float로 바꾸지 않아 긴 숫자의 유효 자릿수를 보존한다.

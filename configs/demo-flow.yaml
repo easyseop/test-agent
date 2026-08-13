@@ -1,0 +1,115 @@
+# 주문 관리 대시보드 — /plan-tests → /generate-tests 로 만든 설정
+#
+# 기대값의 근거는 전부 `plans/demo-flow.md`이며, 그 계획의 근거는
+# `docs/demo-app-spec.md`다. 구현 코드의 조건문은 베끼지 않았다.
+#
+# 셀렉터는 `discover`로 확인했고, 응답 구조는 `inspect-api`로 뽑았다.
+# 지어낸 값이 없다.
+
+target:
+  base_url: http://127.0.0.1:5057
+  app_version: demo-app (plan→generate 흐름 검증용)
+
+# 이 설정은 계획에 적힌 것만 확인한다. 크롤링·버튼 스윕은 계획 밖이라 끈다.
+crawl:
+  enabled: false
+button_sweep:
+  enabled: false
+
+data_checks:
+  # 계획 §상태 필터 — 설명서 §2-1
+  # "담당자가 상태 하나를 고르면 그 상태인 주문만 목록에 나온다"
+  - name: 상태필터-발송
+    description: 상태를 shipped로 거르면 발송 상태인 주문만 나와야 한다
+    page: /
+    steps:
+      - {action: select, selector: "#status", value: "shipped"}
+      - {action: click, selector: "role=button[name='조회']"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 금액]
+    query:
+      api:
+        url: "/api/orders?status=shipped"
+        rows_path: orders
+        columns: [id, customer, status, amount]
+
+  # 계획 §카테고리 필터 — 설명서 §2-4
+  - name: 카테고리필터-전자기기
+    description: 카테고리를 전자기기로 거르면 그 카테고리 주문만 나와야 한다
+    page: /
+    steps:
+      - {action: select, selector: "#category", value: "전자기기"}
+      - {action: click, selector: "role=button[name='조회']"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 금액]
+    query:
+      api:
+        url: "/api/orders?category=전자기기"
+        rows_path: orders
+        columns: [id, customer, status, amount]
+
+  # 계획 §날짜 범위 필터 — 설명서 §2-2
+  # "시작일과 종료일은 둘 다 포함한다. 6월 1일 ~ 6월 30일로 조회하면
+  #  6월 30일에 들어온 주문도 반드시 포함된다"
+  #
+  # ⚠️ 기대값은 이 문장에서 나왔다. 구현이 끝날을 빠뜨리고 있어도 기대값은
+  #    설명서대로 둔다 — 그래야 그 차이가 드러난다.
+  - name: 날짜범위-6월-끝날포함
+    description: 6/1~6/30으로 조회하면 6월 30일 주문까지 포함되어야 한다
+    page: /
+    steps:
+      - {action: fill, selector: "#date-from", value: "2026-06-01"}
+      - {action: fill, selector: "#date-to", value: "2026-06-30"}
+      - {action: click, selector: "role=button[name='조회']"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 금액]
+    query:
+      api:
+        url: "/api/orders?date_from=2026-06-01&date_to=2026-06-30"
+        rows_path: orders
+        columns: [id, customer, status, amount]
+
+  # 계획 §고객 검색 — 설명서 §2-3
+  # "'김'으로 검색하면 김철수·김영희 주문이 모두 나온다" (부분일치)
+  - name: 고객검색-김-부분일치
+    description: 고객명 일부로 검색하면 그 글자가 든 고객의 주문이 모두 나와야 한다
+    page: /
+    steps:
+      - {action: fill, selector: "#q", value: "김"}
+      - {action: click, selector: "role=button[name='조회']"}
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 금액]
+    query:
+      api:
+        url: "/api/orders?q=김"
+        rows_path: orders
+        columns: [id, customer, status, amount]
+
+  # 계획 §표와 정답원 일치
+  # 순서는 보지 않는다 — 설명서에 정렬 규칙이 없다
+  - name: 전체목록-정답원과일치
+    description: 필터 없이 본 표는 정답원의 전체 목록과 행 단위로 일치해야 한다
+    page: "/?per_page=200"
+    steps:
+      - {action: wait_for, selector: "#orders-table"}
+    ui_table:
+      selector: "#orders-table"
+      columns: [주문번호, 고객, 상태, 금액]
+    query:
+      api:
+        url: "/api/orders"
+        rows_path: orders
+        columns: [id, customer, status, amount]
+
+report:
+  title: 주문 관리 대시보드 — 계획 기반 검증
+
+output_dir: runs
