@@ -269,3 +269,78 @@ def test_html_document_is_checked(ctype):
     res = run_axe(_TypedPage(ctype, result={"violations": [], "rulesRun": 62}))
     assert not res.skipped
     assert res.checked is True
+
+
+# ── '점검 대상 아님'은 '점검하고 깨끗함'이 아니다 ──────────────────
+#
+# /adversarial-verify로 발견한 결함(2026-08-24). a11y.py가 skipped라는 제3의
+# 상태를 만들어놓고 _collect_a11y가 경계에서 `return [], ""`로 버리고 있었다.
+# 그 결과 비-HTML만 크롤된 사이트가 '접근성 이상 없음'으로 통과했다.
+# 이 모듈 docstring이 경고하는 바로 그 실패("검사 못 함이 이상 없음으로 둔갑")를
+# 한 함수 뒤에서 저지른 것이다.
+
+def _skipped_page(path="/x.csv"):
+    return SimpleNamespace(a11y=[], a11y_error="",
+                           a11y_skipped="HTML 문서가 아님(text/csv)", path=path)
+
+
+def _clean_page(path="/p"):
+    return SimpleNamespace(a11y=[], a11y_error="", a11y_skipped="", path=path)
+
+
+@pytest.mark.parametrize("severity,expected", [("warn", WARN), ("fail", FAIL)])
+def test_all_pages_skipped_is_not_a_pass(severity, expected):
+    """점검한 페이지가 0개인데 '위반 없음'이라고 하면 거짓 통과다."""
+    res = _a11y_scenario_result([_skipped_page(), _skipped_page("/y.json")],
+                                severity)
+    assert res.status == expected
+    assert "확인 불가" in res.reasons[0]
+
+
+def test_some_skipped_with_checked_clean_still_passes():
+    """반대 방향 — 정상 페이지를 점검해 깨끗했다면 통과를 뺏으면 안 된다.
+
+    이쪽이 깨지면 CSV 링크 하나 있는 멀쩡한 사이트가 영원히 통과하지 못한다.
+    """
+    res = _a11y_scenario_result([_skipped_page(), _clean_page()], "fail")
+    assert res.status == PASS
+    assert "점검 1개 페이지" in res.reasons[0]
+    assert "점검 대상 아님 1개 제외" in res.reasons[0]
+
+
+def test_skipped_does_not_mask_real_violations():
+    pages = [_skipped_page(),
+             SimpleNamespace(a11y=[_issue()], a11y_error="", a11y_skipped="",
+                             path="/p")]
+    res = _a11y_scenario_result(pages, "fail")
+    assert res.status == FAIL
+    assert "접근성 위반 1건" in res.reasons[0]
+
+
+def test_collect_a11y_preserves_skip_reason():
+    """경계에서 skipped를 버리면 증적이 '점검하고 깨끗함'과 구분되지 않는다."""
+    from webtest_agent.discovery import _collect_a11y
+
+    class _P:
+        url = "http://x/"
+
+        def __init__(self, ctype):
+            self._ctype = ctype
+
+        def add_script_tag(self, content=None):
+            pass
+
+        def evaluate(self, script, arg=None):
+            if "contentType" in script:
+                return self._ctype
+            return {"violations": [], "rulesRun": 62}
+
+    cfg = SimpleNamespace(a11y=SimpleNamespace(
+        enabled=True, engine="axe", tags=[], rules_exclude=[]))
+
+    _, err, skipped = _collect_a11y(_P("text/csv"), cfg)
+    assert skipped and not err, "비-HTML의 미점검 사유가 사라졌다"
+
+    _, err2, skipped2 = _collect_a11y(_P("text/html"), cfg)
+    assert not skipped2 and not err2
+    assert skipped != skipped2, "미점검과 점검-깨끗이 증적에서 구분되지 않는다"

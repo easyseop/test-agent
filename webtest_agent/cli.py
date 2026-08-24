@@ -183,6 +183,10 @@ def _a11y_scenario_result(pages, severity: str, engine: str = "axe",
     counted: list[dict] = []
     pages_with_issues = 0
     failed_pages = [p for p in pages if getattr(p, "a11y_error", "")]
+    skipped_pages = [p for p in pages if getattr(p, "a11y_skipped", "")
+                     and not getattr(p, "a11y_error", "")]
+    checked_pages = [p for p in pages if not getattr(p, "a11y_error", "")
+                     and not getattr(p, "a11y_skipped", "")]
 
     for p in pages:
         gated = [i for i in p.a11y
@@ -211,9 +215,24 @@ def _a11y_scenario_result(pages, severity: str, engine: str = "axe",
         return res
 
     if total == 0:
-        res.status = PASS
         gate = "" if min_impact == "minor" else f", {min_impact} 이상만 집계"
-        res.reasons.append(f"발견된 접근성 위반 없음 ({label} 기준{gate})")
+        if not checked_pages:
+            # 점검한 페이지가 하나도 없는데 '위반 없음'이라고 하면, 비-HTML만
+            # 크롤된 사이트가 '접근성 이상 없음'으로 통과한다. 0건이 아니라
+            # 확인 불가다.
+            res.status = FAIL if severity == "fail" else WARN
+            reason = (f"접근성을 점검한 페이지가 없습니다 — 위반 없음이 아니라 '확인 불가'입니다"
+                      f" (점검 대상 아님 {len(skipped_pages)}개)")
+            if skipped_pages:
+                reason += f": {skipped_pages[0].path} {skipped_pages[0].a11y_skipped}"
+            res.reasons.append(reason)
+            return res
+        res.status = PASS
+        note = (f" · 점검 대상 아님 {len(skipped_pages)}개 제외"
+                if skipped_pages else "")
+        res.reasons.append(
+            f"발견된 접근성 위반 없음 ({label} 기준{gate})"
+            f" — 점검 {len(checked_pages)}개 페이지{note}")
         return res
 
     res.status = FAIL if severity == "fail" else WARN
@@ -481,6 +500,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             detail = (f" [{summarize_impacts(issues)}]"
                       if cfg.a11y.engine == "axe" and issues else "")
             print(f"   접근성 점검({engine_label}): 이슈 {len(issues)}건{detail} ({gate})")
+            skipped = [p for p in discovery.pages
+                       if getattr(p, "a11y_skipped", "") and not getattr(p, "a11y_error", "")]
+            if skipped:
+                print(f"   · 점검 대상 아님 {len(skipped)}개 페이지 "
+                      f"({skipped[0].a11y_skipped}) — 위반 0건에 포함되지 않음")
             if unchecked:
                 # 조용히 넘기면 '위반 없음'으로 읽힌다. 화면에서도 구분해 알린다.
                 print(f"   ⚠ 접근성 점검 실패 {len(unchecked)}개 페이지 — "
@@ -612,7 +636,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             results,
             blocked,
             [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y,
-              "a11y_error": getattr(p, "a11y_error", "")}
+              "a11y_error": getattr(p, "a11y_error", ""),
+              "a11y_skipped": getattr(p, "a11y_skipped", "")}
              for p in discovery.pages],
             coverage=sweep_coverage,
             mask_patterns=cfg.report.mask_patterns,
@@ -658,7 +683,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                     cur_checks_sha256=meta.checks_sha256)
     summary = write_reports(run_dir, meta, results, blocked,
                             [{"path": p.path, "title": p.title, "url": p.url, "a11y": p.a11y,
-              "a11y_error": getattr(p, "a11y_error", "")}
+              "a11y_error": getattr(p, "a11y_error", ""),
+              "a11y_skipped": getattr(p, "a11y_skipped", "")}
                              for p in discovery.pages],
                             diff=diff, coverage=sweep_coverage,
                             mask_patterns=cfg.report.mask_patterns)
