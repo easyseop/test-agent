@@ -55,7 +55,7 @@ Playwright Trace를 남깁니다.
 터미널에서 저장소 폴더로 이동한 뒤 다음 명령을 한 번 실행합니다.
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[db,dev]" -c constraints.txt
 python -m playwright install chromium
 ```
 

@@ -27,7 +27,7 @@ Python 3.11 이상이 필요하다.
 git clone https://github.com/easyseop/test-agent
 cd test-agent
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[db]" -c constraints.txt
+pip install -e ".[db,dev]" -c constraints.txt
 python -m playwright install chromium
 ```
 

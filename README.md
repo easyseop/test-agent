@@ -46,7 +46,7 @@
 ## 설치
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[db,dev]" -c constraints.txt
 python -m playwright install chromium   # Playwright 브라우저 (이미 있으면 생략)
 ```
 
