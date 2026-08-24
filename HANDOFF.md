@@ -5,7 +5,7 @@
 >
 > 마지막 갱신: **2026-08-10**
 > 기준 저장소·브랜치: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq`
-> 유닛 테스트 **570개 통과** (커밋·브랜치는 훅이 매 턴 실측 주입 — 문서 값은 참고용)
+> 유닛 테스트 **583개 통과** (커밋·브랜치는 훅이 매 턴 실측 주입 — 문서 값은 참고용)
 
 ---
 
@@ -14,12 +14,12 @@
 ## 0. 핵심 (매 턴 자동 주입 구간)
 
 **현재 위치**: `easyseop/test-agent` @ `claude/web-app-test-agent-yyc2eq` ·
-유닛 테스트 570개 통과. 사용자 최종 목표(설명서→시나리오 생성→봇 실행→결과)는 **실증 완료**.
+유닛 테스트 583개 통과. 사용자 최종 목표(설명서→시나리오 생성→봇 실행→결과)는 **실증 완료**.
 
 **최근 완료**: `/adversarial-verify` 스킬(반례 사냥 절차) — 그 절차로 axe 결함 1건 자체 발견·수정.
  실전 SPA(OpenMetadata) 검증에서 나온 보완 9건 + 설정 편의 3건
 (`inspect-api`·`discover` 표 추출·`check-config`) + Lab 채점 연결(Input Lab).
-Lab **35/36**, 기준선 대비 회귀 0(§4-E·§7). 유닛 570개.
+Lab **35/36**, 기준선 대비 회귀 0(§4-E·§7). 유닛 583개.
 **대기(사용자 결정)**: Console 결과 보존 정책.
 **범위 밖**: `knowledge/` 위키 — 사용자 본인의 일. 요청 전까지 손대지 않는다.
 
@@ -52,7 +52,7 @@ Lab **35/36**, 기준선 대비 회귀 0(§4-E·§7). 유닛 570개.
 ```bash
 cd /workspace/test-agent
 git log --oneline -5 && git status --short     # 어디까지 왔는지
-python3 -m pytest tests/ -q                     # 570 passed 여야 정상
+python3 -m pytest tests/ -q                     # 583 passed 여야 정상
 ```
 
 읽는 순서: **이 문서 → `CLAUDE.md`(규약) → `docs/02-design.md` §5(판정 규칙)**.
@@ -275,6 +275,32 @@ auth 11/12 · commerce 8/8 · grid 6/6 · checkout 5/5 · input 5/5 = **35/36
 교훈: **제3의 상태를 만들었으면 경계마다 그게 살아남는지 확인할 것.** 만든 곳에서는
 올바랐고 한 단계 뒤에서 사라졌다 — 단위 테스트로는 안 보이는 자리였다.
 
+### 4-C-5. OpenMetadata 파일럿 발견 3건 (2026-08-24)
+
+제3자가 실제 OM 1.13.2에 붙여본 파일럿에서 나온 **실전 통합 이슈**. 데모앱은
+IndexedDB를 안 쓰고 env도 다 갖춰져 있어 여기까지 못 왔다 — 실전에 붙여야만 나온다.
+
+1. ⭐ **IndexedDB 인증 세션 유실.** OM은 토큰을 IndexedDB(`AppDataStore`)에 둔다.
+   Playwright 기본 `storage_state()`는 쿠키+localStorage만 담아 토큰이 유실되고,
+   **로그인은 성공했는데 이후 모든 화면이 로그인 창**이 된다. 증상이 "로그인이
+   안 된다"로 보여 원인 추적이 어렵다.
+   → `storage_state(indexed_db=True)`. **3엔진 실측**: 기본 저장은 전부 유실,
+   옵션 저장은 전부 유지. `auth.indexed_db`(기본 True)로 끌 수 있다.
+   구버전 Playwright면 **경고를 남기고** 폴백 — 조용히 넘기면 증상이 되살아난다.
+   인증 상태 파일에 토큰이 들어가므로 0600·자동삭제 정책이 더 중요해졌다.
+2. **OM 로그인 셀렉터 정정** — `[data-testid="email"]`은 입력이 아니라 래퍼라
+   `fill`이 실패한다. `#email`/`#password`로 교체.
+3. **discover가 자기가 안 쓰는 env에 막힘.** `${OM_JWT}`가 없으면 discover가
+   전체 차단됐다 — 검사 섹션을 실행하지도 않는데. 첫 발디딤이 막히면 셀렉터를
+   못 얻어 진행이 잠긴다. → `load_config(defer_check_env=True)`로 검사·notify·
+   write_reset 섹션의 미설정 env는 기록으로 넘기고 목록을 출력한다.
+   **auth는 완화 대상이 아니다** — discover도 로그인을 수행하므로 비밀번호가
+   비면 `${VAR}`가 그대로 입력돼 조용히 실패한다. `run`은 여전히 fail-closed.
+
+자체 발견(적대적 검증): 완화 모드가 **전역에 남는 누수** — 파싱 중간에 예외로
+죽으면 다음 `run`이 fail-closed를 잃는다. `load_config` 진입 시 초기화로 차단.
+회귀 테스트 13개.
+
 ### 4-D. 한 바퀴 실증 ⭐ (사용자 최종 목표)
 `d9c85c0`. **설명서 → 시나리오 자동 생성 → 봇 실행 → 결과**를 실제로 돌렸다.
 
@@ -425,7 +451,7 @@ SQL은 파라미터 바인딩만, if/else는 결정성 때문에 넣지 않음, 
 ## 8. 자주 쓰는 명령
 
 ```bash
-python3 -m pytest tests/ -q                              # 570 passed
+python3 -m pytest tests/ -q                              # 583 passed
 fuser -k 5057/tcp 2>/dev/null                            # 떠돌이 데모앱 정리 (실행 전 필수)
 ./scripts/run_demo.sh                                     # 정상 모드 — 전부 통과해야 정상
 ./scripts/run_demo.sh --bug                               # 버그 주입 — 검출 + 종료코드 1이 정상

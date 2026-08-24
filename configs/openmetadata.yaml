@@ -45,8 +45,8 @@ auth:
   steps:
     - {action: goto, value: /signin}
     - {action: wait_for, selector: '[data-testid="login-form-container"]'}
-    - {action: fill, selector: '[data-testid="email"]', value: "admin@open-metadata.org"}
-    - {action: fill, selector: '[data-testid="password"]', value: "${OM_ADMIN_PASSWORD}"}
+    - {action: fill, selector: '#email', value: "admin@open-metadata.org"}
+    - {action: fill, selector: '#password', value: "${OM_ADMIN_PASSWORD}"}
     - {action: click, selector: '[data-testid="login"]'}
     - {action: wait_ms, value: "3000"}
     # 로그인 폼이 사라진 것으로 성공을 판정한다.

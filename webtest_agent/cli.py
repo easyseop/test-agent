@@ -882,7 +882,16 @@ def cmd_inspect_api(args: argparse.Namespace) -> int:
 
 
 def cmd_discover(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    # discover는 검사 섹션을 실행하지 않는다. 실행하지도 않을 `${VAR}` 때문에
+    # 첫 발디딤(셀렉터 수집)이 막히면 사용자는 아무 데도 갈 수 없다.
+    cfg = load_config(args.config, defer_check_env=True)
+    if cfg.deferred_env:
+        print(f"  ! 환경변수 {len(cfg.deferred_env)}개가 아직 없습니다 — "
+              "discover는 그대로 진행하지만 run 전에는 채워야 합니다:")
+        for name in cfg.deferred_env[:8]:
+            print(f"    {name}")
+        if len(cfg.deferred_env) > 8:
+            print(f"    … 외 {len(cfg.deferred_env) - 8}개")
     engine = _resolve_engine(args, cfg)
     run_dir = _make_run_dir(cfg, args.out)
     with BrowserSession(headless=not args.headed, engine=engine) as session:

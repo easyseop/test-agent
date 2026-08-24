@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import time
+import warnings
 from dataclasses import replace
 from pathlib import Path
 
@@ -409,6 +410,31 @@ class Runner:
         if bounded < requested_ms:
             raise RunDeadlineExceeded
 
+    def _save_storage_state(self, ctx, state_path: Path) -> None:
+        """로그인 세션을 파일로 저장한다.
+
+        기본 storage_state는 쿠키·localStorage만 담는다. 토큰을 IndexedDB에 두는
+        SPA(OpenMetadata 등)는 그러면 세션이 안 옮겨져, 로그인은 성공했는데 이후
+        모든 화면이 미인증이 된다 — 증상이 "로그인이 안 된다"로 보여 원인을 찾기
+        어렵다. 3엔진 실측에서 indexed_db=True 일 때만 토큰이 살아남았다.
+
+        Playwright가 이 옵션을 모르면(구버전) 조용히 넘기지 않고 경고를 남긴 뒤
+        기본 방식으로 저장한다 — 조용히 넘기면 위 증상이 원인 불명으로 되살아난다.
+        """
+        auth = getattr(self.cfg, "auth", None)
+        want_idb = getattr(auth, "indexed_db", True) if auth else True
+        if want_idb:
+            try:
+                ctx.storage_state(path=str(state_path), indexed_db=True)
+                return
+            except TypeError as err:
+                warnings.warn(
+                    "이 Playwright는 storage_state(indexed_db=True)를 지원하지 않습니다"
+                    f" ({err}). IndexedDB에 토큰을 두는 앱은 로그인 세션이 이어지지"
+                    " 않습니다 — playwright를 올리거나 auth.per_context를 쓰세요.",
+                    RuntimeWarning, stacklevel=2)
+        ctx.storage_state(path=str(state_path))
+
     def authenticate(self, steps, state_path: Path) -> None:
         """로그인 스텝을 1회 수행하고 세션(storage_state)을 저장한다."""
         state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -422,7 +448,7 @@ class Runner:
                 page.set_default_timeout(self._bounded_timeout(5000))
                 self._exec_step(page, step)
                 self._wait(page, self.cfg.target.settle_ms)
-            ctx.storage_state(path=str(state_path))
+            self._save_storage_state(ctx, state_path)
             os.chmod(state_path, 0o600)
         finally:
             ctx.close()

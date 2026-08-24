@@ -82,11 +82,22 @@ _SECRET_SELECTOR_RX = re.compile(
 MASK = "***"
 
 
+# 이 명령이 실행하지 않는 섹션의 미설정 환경변수를 모아두는 곳.
+# None이면 평소대로 즉시 오류(fail-closed). 목록이면 이름만 적어두고 `${VAR}`를
+# 그대로 남긴다 — 치환되지 않은 채로 남으므로 진짜 값으로 오인될 수 없다.
+_DEFERRED_ENV: list[str] | None = None
+
+
 def _expand_env(value: str, where: str) -> str:
     """'${VAR}' 형태를 환경변수로 치환 — 비밀번호·DB 접속정보의 평문 저장 방지용."""
     def repl(m: re.Match) -> str:
         name = m.group(1)
         if name not in os.environ:
+            if _DEFERRED_ENV is not None:
+                # discover처럼 이 섹션을 실행하지 않는 명령. 여기서 막으면 첫
+                # 발디딤(셀렉터 수집)이 잠겨 진행 자체가 불가능해진다.
+                _DEFERRED_ENV.append(f"{name} ({where})")
+                return m.group(0)
             raise ConfigError(f"{where}: 환경변수 {name}가 설정되어 있지 않습니다 (${{{name}}} 치환 실패)")
         return os.environ[name]
     return _ENV_RX.sub(repl, value)
@@ -499,13 +510,24 @@ class AuthConfig:
 
     per_context=True면 시나리오마다 컨텍스트 안에서 로그인을 다시 수행한다.
 
-    storage_state는 쿠키와 localStorage만 담는다. 토큰을 sessionStorage나
-    메모리에만 두는 SPA는 이 방식으로 세션이 옮겨지지 않아, 로그인은 성공해도
-    정작 검사할 화면마다 미인증 상태가 된다(로그인 화면으로 튕김). 그런 앱에서는
-    매번 다시 로그인하는 편이 느리지만 정확하다.
+    storage_state는 기본적으로 쿠키와 localStorage만 담는다. 토큰을
+    **IndexedDB**에 두는 SPA(OpenMetadata 등)는 그대로면 세션이 옮겨지지 않아,
+    로그인은 성공해도 검사할 화면마다 미인증 상태가 된다(로그인 화면으로 튕김).
+    증상이 "로그인이 안 된다"로 보여서 원인을 찾기 어렵다.
+
+    indexed_db=True(기본)면 IndexedDB까지 담는다. Chromium·Firefox·WebKit
+    3엔진 실측에서 이 옵션이 있어야만 토큰이 살아남았다. 끄면 파일은 작아지지만
+    IndexedDB를 쓰는 앱에서 위 증상이 되살아난다.
+
+    토큰을 sessionStorage나 메모리에만 두는 앱은 여전히 옮겨지지 않는다 —
+    그런 앱은 per_context=True로 매번 다시 로그인하는 편이 느리지만 정확하다.
+
+    **인증 상태 파일은 비밀값이다.** IndexedDB를 담으면 토큰이 그대로 들어가므로
+    0600 권한·기본 자동 삭제 정책이 특히 중요하다.
     """
     steps: list[Step] = field(default_factory=list)
     per_context: bool = False
+    indexed_db: bool = True
 
 
 def _mask_patterns(raw) -> list[str]:
@@ -618,6 +640,9 @@ class AgentConfig:
     write_reset: WriteResetConfig | None = None
     baselines_dir: str = "baselines"
     output_dir: str = "runs"
+    # defer_check_env로 넘긴 미설정 환경변수 목록. 비어 있지 않으면 이 설정은
+    # 아직 `run` 할 수 없다 — 호출부가 반드시 사용자에게 알려야 한다.
+    deferred_env: list[str] = field(default_factory=list)
     config_path: str = ""
 
 
@@ -899,7 +924,22 @@ def _expand_foreach(raw_list, where_prefix: str, config_dir: Path) -> list:
     return expanded
 
 
-def load_config(path: str | Path) -> AgentConfig:
+def load_config(path: str | Path,
+                defer_check_env: bool = False) -> AgentConfig:
+    """설정을 읽고 검증한다.
+
+    defer_check_env=True면 **검사 섹션**(data_checks 등)의 미설정 환경변수를
+    오류가 아니라 기록으로 넘긴다. `discover`처럼 그 섹션을 실행하지 않는 명령
+    전용이다 — 실행하지도 않을 `${VAR}` 때문에 첫 발디딤(셀렉터 수집)이 막히면
+    사용자는 아무 데도 갈 수 없다. 넘긴 이름은 `deferred_env`에 담긴다.
+
+    auth는 이 완화의 대상이 아니다. discover도 로그인을 수행하므로, 비밀번호가
+    비면 `${VAR}`가 그대로 입력돼 로그인이 조용히 실패한다 — 즉시 막는 게 맞다.
+    """
+    global _DEFERRED_ENV
+    # 진입할 때마다 초기화한다. 앞선 호출이 파싱 도중 예외로 죽으면 완화 모드가
+    # 전역에 남아, 그다음 `run`이 fail-closed를 잃은 채로 통과할 수 있다.
+    _DEFERRED_ENV = None
     p = Path(path)
     if not p.exists():
         raise ConfigError(f"설정 파일을 찾을 수 없습니다: {p}")
@@ -958,6 +998,7 @@ def load_config(path: str | Path) -> AgentConfig:
     )
 
     checks: list[DataCheckSpec] = []
+    _DEFERRED_ENV = [] if defer_check_env else None
     for i, raw in enumerate(data.get("data_checks") or []):
         where = f"data_checks[{i}]"
         if not isinstance(raw, dict) or not raw.get("name"):
@@ -1201,6 +1242,11 @@ def load_config(path: str | Path) -> AgentConfig:
         ignore_patterns=_regex_list(lc_raw.get("ignore_patterns"), "link_check.ignore_patterns"),
     )
 
+    # 여기서 완화를 끝낸다. auth는 discover도 **실행**하므로 엄격해야 한다 —
+    # 비밀번호가 비면 `${VAR}`가 그대로 입력돼 로그인이 조용히 실패한다.
+    deferred_env = list(_DEFERRED_ENV or [])
+    _DEFERRED_ENV = None
+
     auth: AuthConfig | None = None
     a_raw = data.get("auth")
     if a_raw:
@@ -1208,7 +1254,8 @@ def load_config(path: str | Path) -> AgentConfig:
         if not auth_steps:
             raise ConfigError("auth: steps가 최소 1개 필요합니다")
         auth = AuthConfig(steps=auth_steps,
-                          per_context=bool(a_raw.get("per_context", False)))
+                          per_context=bool(a_raw.get("per_context", False)),
+                          indexed_db=bool(a_raw.get("indexed_db", True)))
 
     r = _sub(data, "report")
     report = ReportConfig(
@@ -1255,5 +1302,6 @@ def load_config(path: str | Path) -> AgentConfig:
         write_reset=write_reset,
         baselines_dir=str(data.get("baselines_dir", "baselines")),
         output_dir=str(data.get("output_dir", "runs")),
+        deferred_env=deferred_env,
         config_path=str(p),
     )
