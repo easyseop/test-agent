@@ -45,7 +45,11 @@
 
 ## 설치
 
+**Python 3.11 이상**이 필요합니다(`python3 --version`으로 확인). 낮으면 pip가
+"setup.py 없음"처럼 원인과 무관해 보이는 오류를 냅니다 — [트러블슈팅](QUICKSTART.md#트러블슈팅) 참조.
+
 ```bash
+python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[db,dev]" -c constraints.txt
 python -m playwright install chromium   # Playwright 브라우저 (이미 있으면 생략)
 ```
@@ -55,7 +59,7 @@ python -m playwright install chromium   # Playwright 브라우저 (이미 있으
 ```bash
 ./scripts/run_demo.sh          # 읽기 전용 기본 모드 → 실패 0건, 위험 동작 차단 기록
 ./scripts/run_demo.sh --write  # 시드 DB 주문 등록 검증을 명시적으로 승인
-./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 6건 검출 (종료코드 1이 정상)
+./scripts/run_demo.sh --bug    # 버그 주입 모드 → 심어둔 버그 6개를 실패 7건으로 검출 (종료코드 1이 정상)
 ./scripts/run_demo.sh --auth   # 로그인 모드 → 10개 통과 + 인증 상태 자동 삭제
 ./scripts/run_demo.sh --load-error  # 첫 화면 로드 오류 1건 검출 (종료코드 1이 정상)
 ./scripts/run_demo.sh --deadline  # 전체 제한 초과 → 실행 불가·종료코드 2

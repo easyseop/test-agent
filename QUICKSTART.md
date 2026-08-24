@@ -21,7 +21,12 @@
 
 ## 1. 설치 — 한 번만
 
-Python 3.11 이상이 필요하다.
+Python 3.11 이상이 필요하다. **먼저 확인한다** — 이걸 건너뛰면 아래
+[트러블슈팅](#트러블슈팅)의 엉뚱한 오류를 정통으로 맞는다.
+
+```bash
+python3 --version    # Python 3.11.x 이상이어야 한다
+```
 
 ```bash
 git clone https://github.com/easyseop/test-agent
@@ -409,6 +414,47 @@ python -m webtest_agent history -c configs/우리사이트.yaml
   판정이 끝난 뒤 리포트를 쓸 때만 적용되므로 **가려도 합격·불합격은 바뀌지
   않는다.** 다만 패턴을 넓게 쓰면 일반 단어까지 가려져 리포트가 읽기 어려워진다
   (`이[가-힣]{1,2}`는 '이미지'도 문다). 좁게 적는다.
+
+## 트러블슈팅
+
+### `setup.py` 또는 `setup.cfg`를 찾을 수 없다는 오류
+
+```
+ERROR: File "setup.py" or "setup.cfg" not found.
+Directory cannot be installed in editable mode
+(A "pyproject.toml" file was found, but editable mode currently requires
+ a setuptools-based build.)
+```
+
+**Python(과 함께 딸려온 pip)이 구버전이다.** 파일이 없어서가 아니다 —
+`pyproject.toml`은 저장소에 있다. 오래된 pip(21.x 등)가 PEP 660 editable 설치를
+모르는 것인데, 오류 문구가 그 얘기를 전혀 하지 않아 원인을 찾기 어렵다.
+macOS 기본 `python3`(3.9.x)에서 흔히 나온다.
+
+```bash
+python3 --version              # 3.11 미만이면 이 문제다
+python3.11 -m venv .venv && . .venv/bin/activate
+pip install -e ".[db,dev]" -c constraints.txt
+```
+
+pip 버전이 조금 새로우면 대신 이렇게 나오는데, 같은 원인이다:
+`ERROR: Package 'webtest-agent' requires a different Python: 3.10.x not in '>=3.11'`
+
+`./scripts/run_demo.sh`는 실행 전에 Python 버전을 먼저 확인해 이 상황이면
+안내와 함께 종료코드 2로 멈춘다.
+
+### 브라우저 실행 파일이 없다는 오류
+
+```
+Executable doesn't exist at .../chromium_headless_shell-XXXX/...
+```
+
+Playwright가 기대하는 브라우저 리비전이 안 깔린 것이다. **환경 한계가 아니라
+설치 한 줄로 풀린다.**
+
+```bash
+python -m playwright install chromium
+```
 
 ## 막힐 때
 

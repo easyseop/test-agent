@@ -52,12 +52,35 @@ Playwright Trace를 남깁니다.
 
 ### 설치
 
-터미널에서 저장소 폴더로 이동한 뒤 다음 명령을 한 번 실행합니다.
+**준비물: Python 3.11 이상.** 먼저 버전부터 확인합니다.
 
 ```bash
+python3 --version
+```
+
+`Python 3.11.x` 이상이 나와야 합니다. 낮은 숫자(예: 3.9)가 나오면 먼저
+Python을 새로 설치하세요. 이걸 건너뛰면 다음 단계에서 `setup.py 없음`처럼
+**원인과 상관없어 보이는 오류**가 나서 한참 헤매게 됩니다.
+
+그다음 도구를 내려받습니다. 원하는 폴더에서 아래를 실행하면 `test-agent`
+폴더가 생기고, 그 안으로 들어갑니다.
+
+```bash
+git clone https://github.com/easyseop/test-agent
+cd test-agent
+```
+
+이제 아래를 순서대로 한 번 실행합니다.
+
+```bash
+python3 -m venv .venv         # 이 프로젝트 전용 공간을 만듭니다
+. .venv/bin/activate          # 그 공간으로 들어갑니다 (Windows: .venv\Scripts\activate)
 pip install -e ".[db,dev]" -c constraints.txt
 python -m playwright install chromium
 ```
+
+> 두 번째 줄(`activate`)은 **터미널을 새로 열 때마다** 다시 실행해야 합니다.
+> 안 하면 "명령을 찾을 수 없다"는 오류가 납니다.
 
 ### 정상 기능 확인
 

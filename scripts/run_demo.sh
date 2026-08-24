@@ -12,6 +12,31 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Python 버전을 여기서 먼저 막는다.
+#
+# 이 스크립트가 '설치가 됐는지' 확인하는 진입점이라, 구버전으로 들어오면 여기서
+# 잡는 게 효과가 가장 크다. 그냥 두면 pip가 대신 실패하는데 그 메시지가 원인을
+# 알려주지 않는다 — macOS 기본 Python에 딸려오는 pip 21.x는 PEP 660 editable을
+# 몰라서 "setup.py 없음"이라고만 말하고, Python이 낮다는 얘기는 어디에도 없다.
+PY_BIN="${PYTHON:-python3}"
+if ! command -v "$PY_BIN" > /dev/null 2>&1; then
+  echo "Python을 찾을 수 없습니다 ($PY_BIN). Python 3.11 이상을 설치하세요 — QUICKSTART.md §1" >&2
+  exit 2
+fi
+if ! "$PY_BIN" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+  CURRENT="$("$PY_BIN" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo "?")"
+  cat >&2 <<MSG
+Python 3.11 이상이 필요합니다 (현재 $CURRENT).
+
+  python3.11 -m venv .venv && . .venv/bin/activate
+  pip install -e ".[db,dev]" -c constraints.txt
+
+자세한 순서는 QUICKSTART.md §1에 있습니다.
+다른 파이썬을 쓰려면 PYTHON=/path/to/python3.11 $0 처럼 지정하세요.
+MSG
+  exit 2
+fi
+
 BUG="${DEMO_BUG:-0}"
 AUTH=0
 ALLOW_WRITE=0
